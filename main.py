@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.ai_client import ShortcutAIClient  # noqa: E402
+from src import ai_cooldown  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.database import ArticleStore  # noqa: E402
 from src.lock import RunAlreadyActiveError, RunLock  # noqa: E402
@@ -105,8 +106,31 @@ def main(argv: list[str] | None = None) -> int:
     lock = RunLock(config.project_root / "data" / "news.lock", logger=logger)
     try:
         with lock:
-            pipeline = NewsPipeline(config, store=store, logger=logger)
-            run = pipeline.run_once(limit=args.limit)
+            remaining = ai_cooldown.remaining_seconds(config.project_root)
+            if remaining > 0:
+                logger.warning(
+                    "Apple Intelligence クールダウン中のためAI処理をスキップします（残り %.0f 秒）",
+                    remaining,
+                )
+                print(f"AIクールダウン中（残り {remaining:.0f} 秒）: 要約・レビューをスキップします。")
+                run = RunResult(discovered=0, results=(), feed_errors=())
+            else:
+                pipeline = NewsPipeline(config, store=store, logger=logger)
+                run = pipeline.run_once(limit=args.limit)
+                busy = any(
+                    "利用制限" in result.reason or "完了できません" in result.reason
+                    for result in run.results
+                )
+                if busy:
+                    ai_cooldown.start(
+                        config.project_root,
+                        config.ai_cooldown_seconds,
+                        "Apple Intelligence の混雑を検出",
+                    )
+                    logger.warning(
+                        "Apple Intelligence が混雑しているため %.0f 秒のクールダウンを開始しました",
+                        config.ai_cooldown_seconds,
+                    )
             print_run_result(run)
 
             if args.no_notify:

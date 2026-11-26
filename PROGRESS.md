@@ -92,7 +92,7 @@
 5. **設定ファイル**: `config/config.yaml` は未作成で `config.example.yaml` にフォールバック中。
 
 ## 5. 最後に成功したテスト・確認コマンド
-- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `61 passed in 6.41s`
+- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `66 passed in 6.38s`
 - `launchctl print gui/501/com.aki.news-telegram` → `state = not running`, `run interval = 300 seconds`
 - 新要約の実検証 → 45文字・6要素を含む要約を生成、短縮通知を送信（`message_id=22`）
 - `/Users/aki/.pyenv/versions/3.10.12/bin/python3 main.py --check-only` → `OK: 設定・ショートカット・DB初期化を確認しました。`

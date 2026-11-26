@@ -33,6 +33,7 @@ ai:
   summarize_shortcut: "News_Summarize"
   review_shortcut: "News_Review"
   timeout_seconds: 240         # 実測: 要約97秒 / レビュー193秒。プロセス終了後の出力待ちを含む
+  cooldown_seconds: 900        # 混雑（現在、リクエストを完了できません）時にAI呼び出しを止める時間
   max_revision_attempts: 2     # 初回1回 + 修正最大2回 = 最大3回
 
 telegram:
