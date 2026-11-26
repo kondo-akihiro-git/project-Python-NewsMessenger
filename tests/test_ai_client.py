@@ -254,6 +254,14 @@ def test_rate_limit_error() -> None:
         client.summarize("dummy")
 
 
+def test_busy_apple_intelligence_error_is_rate_limit() -> None:
+    """実機の「現在、リクエストを完了できません」も利用制限として扱う。"""
+    factory = _popen_factory_error(returncode=1, stderr="Error: 現在、リクエストを完了できません。")
+    client = ShortcutAIClient(popen_factory=factory, retry_delay_seconds=0.0, max_json_retries=4)
+    with pytest.raises(AIRateLimitError):
+        client.summarize("dummy")
+
+
 def test_timeout_error() -> None:
     def timeout_factory(cmd, **kwargs):
         mock_proc = MagicMock()

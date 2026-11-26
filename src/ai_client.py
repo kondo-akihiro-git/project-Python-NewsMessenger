@@ -26,6 +26,9 @@ _RATE_LIMIT_KEYWORDS = (
     "利用制限",
     "上限",
     "制限に達し",
+    # macOS 側で Apple Intelligence が混雑したときの実機メッセージ。
+    "現在、リクエストを完了できません",
+    "request could not be completed",
 )
 
 

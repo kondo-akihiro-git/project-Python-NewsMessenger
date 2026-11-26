@@ -11,6 +11,7 @@
 - **未完了**: なし（任意の追加チューニングを除く）
 - **既知の運用上の問題**: Apple Intelligence の JSON 出力が不安定（要約が55文字超、レビューの閉じ引用符が `」`、要約フィールド途中で出力終了など）。いずれも検証で拒否して再生成／通知しないため、誤通知は発生しない。プロンプトと再試行設計の強化で改善中（最大5回・文字数差分指示・体言止め時の述語指示・解析失敗時は元プロンプトへ戻す・間隔5秒）。
 - **体言止めガードの見逃し修正**: 1行目だけ名詞止め（`〜を宣言`）を旧ガードが見逃していたため、述語と確認できない行はすべて不合格とする厳格な判定へ変更。既存フィクスチャも述語終わりに修正済み。
+- **Apple Intelligence 混雑時の扱い**: 実機の `現在、リクエストを完了できません。` を利用制限として検出し、即座に失敗させて通知しない（有料APIへのフォールバックはしない）。検証中用いた既送信記事は `NOTIFIED` へ状態復元済み。
 
 ## 2. 完了した作業
 
@@ -90,7 +91,7 @@
 5. **設定ファイル**: `config/config.yaml` は未作成で `config.example.yaml` にフォールバック中。
 
 ## 5. 最後に成功したテスト・確認コマンド
-- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `60 passed in 6.48s`
+- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `61 passed in 6.41s`
 - `launchctl print gui/501/com.aki.news-telegram` → `state = not running`, `run interval = 300 seconds`
 - 新要約の実検証 → 45文字・6要素を含む要約を生成、短縮通知を送信（`message_id=22`）
 - `/Users/aki/.pyenv/versions/3.10.12/bin/python3 main.py --check-only` → `OK: 設定・ショートカット・DB初期化を確認しました。`

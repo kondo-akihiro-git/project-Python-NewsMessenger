@@ -66,7 +66,7 @@ shortcuts list        # News_Summarize / News_Review が表示されること
 
 ```bash
 PY=/Users/aki/.pyenv/versions/3.10.12/bin/python3   # 環境に合わせて変更
-$PY -m pytest -q tests/          # 全テスト（2026-11-26時点で60件）
+$PY -m pytest -q tests/          # 全テスト（2026-11-26時点で61件）
 $PY main.py --check-only         # 設定・ショートカット・DB初期化の確認
 $PY scripts/test_ai_shortcuts.py --repeat 1   # Apple Intelligence 実機検証（数分）
 $PY main.py --limit 1 --no-notify  # RSS→要約→レビューまで（通知なし）
