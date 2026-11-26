@@ -58,7 +58,7 @@ def test_extract_json_object_from_code_fence_and_prose() -> None:
 def test_validate_summary_payload_accepts_3_lines_without_url() -> None:
     data = {
         "status": "OK",
-        "summary": "足立区の会社が攻撃を受け、\nお客さんの情報約5万件が\n外に流れ出たと発表した。",
+        "summary": "足立区の会社が攻撃を受けました。\nお客さんの情報約5万件が漏れました。\n会社は警察に相談しました。",
         "key_facts": ["約5万件流出"],
         "reason": "システムの脆弱性を突かれた",
         "location": "東京都足立区",
@@ -90,7 +90,7 @@ def test_validate_summary_payload_rejects_taigen_dome() -> None:
         validate_summary_payload(
             {
                 **base,
-                "summary": "米マイクロソフトが宣言した\n大規模障害を受けた\n復旧を1時間以内に終える目標",
+                "summary": "米マイクロソフトがコードレッドを宣言\n大規模障害で対応を見直します\n復旧を1時間以内に終えます",
             }
         )
 
@@ -149,7 +149,7 @@ def test_validate_review_payload_pass_and_fail() -> None:
 
 _GOOD_SUMMARY_PAYLOAD = {
     "status": "OK",
-    "summary": "足立区の会社から情報約5万件が\n外に流れ出たと発表された。",
+    "summary": "足立区の会社から情報約5万件が漏れました。\n会社は警察に相談しました。",
     "key_facts": ["約5万件流出"],
     "reason": "不正アクセス",
     "location": "東京都足立区",
@@ -425,7 +425,8 @@ def test_length_failure_adds_shortening_instruction_on_retry() -> None:
     result = client.summarize("base prompt", max_chars=55)
     assert len(prompts) == 2
     assert "再生成指示" in prompts[1]
-    assert "60文字で上限を超えました" in prompts[1]
+    assert "60文字で上限（55文字）を超えました" in prompts[1]
+    assert "あと5文字以上を" in prompts[1]
     assert "あ" * 60 in prompts[1]
     assert "上限以内に短くしてください" in prompts[1]
     assert "事実を削ってはいけません" in prompts[1]

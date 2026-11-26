@@ -346,7 +346,8 @@ class ShortcutAIClient:
         review_shortcut: str = "News_Review",
         shortcuts_bin: str = "/usr/bin/shortcuts",
         timeout_seconds: float = 240.0,
-        max_json_retries: int = 2,
+        # 実測で2回では55文字に届かないことが多いため、具体的な短縮指示付きで最大5回試行する。
+        max_json_retries: int = 4,
         retry_delay_seconds: float = 1.0,
         # list_shortcuts 専用: subprocess.run 互換の呼び出し可能オブジェクト
         list_runner: Optional[Callable] = None,
@@ -560,6 +561,8 @@ class ShortcutAIClient:
         shortcut_name: str,
         prompt_text: str,
         validator: Callable,
+        *,
+        max_chars: int = 90,
     ) -> Any:
         attempts = self._max_json_retries + 1
         last_exc = None
@@ -592,8 +595,10 @@ class ShortcutAIClient:
                         retry_prompt = prompt_text
                         if previous_summary:
                             over = len(previous_summary.replace("\n", ""))
+                            need = max(1, over - max_chars)
                             retry_prompt += (
-                                f"\n\n【再生成指示】前回の要約は{over}文字で上限を超えました。"
+                                f"\n\n【再生成指示】前回の要約は{over}文字で上限（{max_chars}文字）を超えました。"
+                                f"あと{need}文字以上を、事実を残した言い換えで削ってください。"
                                 f"前回の要約:\n{previous_summary}\n"
                                 "この要約の主体・出来事・対象・理由・対応・目的と述語をすべて残したまま、"
                                 "言い換えて上限以内に短くしてください。事実を削ってはいけません。"
@@ -643,6 +648,7 @@ class ShortcutAIClient:
             lambda data, raw: validate_summary_payload(
                 data, max_lines=max_lines, max_chars=max_chars, raw_text=raw
             ),
+            max_chars=max_chars,
         )
 
     def review(self, prompt_text: str) -> ReviewResult:
@@ -671,4 +677,5 @@ class ShortcutAIClient:
             lambda data, raw: validate_summary_payload(
                 data, max_lines=max_lines, max_chars=max_chars, raw_text=raw
             ),
+            max_chars=max_chars,
         )

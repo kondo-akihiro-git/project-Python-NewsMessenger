@@ -64,7 +64,7 @@ def approved_article(tmp_path: Path, status: str = APPROVED, notified_at: str = 
     )
     article = store.get("guid:guid-notify-1")
     assert article is not None
-    article.summary = "サンプル会社で\n個人情報が漏れたと発表しました\n警察に相談しました"
+    article.summary = "サンプル会社が発表しました\n個人情報が漏れました\n警察に相談しました"
     store.update(article)
     store.set_status(
         "guid:guid-notify-1", status, review_status="PASS", notified_at=notified_at
@@ -78,7 +78,7 @@ def test_build_notification_text_separates_link(tmp_path: Path) -> None:
     assert article is not None
     text = build_notification_text(article)
     assert text == (
-        "サンプル会社で\n個人情報が漏れたと発表しました\n警察に相談しました\n\n"
+        "サンプル会社が発表しました\n個人情報が漏れました\n警察に相談しました\n\n"
         "元記事を読む"
     )
     assert "https://" not in text
@@ -101,7 +101,7 @@ def test_build_notification_text_rejects_taigen_dome(tmp_path: Path) -> None:
     config, store = approved_article(tmp_path)
     article = store.get("guid:guid-notify-1")
     assert article is not None
-    article.summary = "米マイクロソフトが宣言した\n大規模障害を受けた\n復旧を1時間以内に終える目標"
+    article.summary = "米マイクロソフトがコードレッドを宣言\n大規模障害で対応を見直します\n復旧を1時間以内に終えます"
     with pytest.raises(ValueError, match="体言止め"):
         build_notification_text(article, max_chars=55)
 
