@@ -67,15 +67,25 @@ def title_keywords(title: str) -> tuple[str, ...]:
     )
 
 
+# 実機で確認した不自然な述語。自然な日本語とは言い切れないため不合格にする。
+_UNNATURAL_PREDICATE = re.compile(r"としました|をしました|ましたです")
+
+
+def has_unnatural_predicate(summary: str) -> bool:
+    """不自然な述語表現があれば True を返す。"""
+    return bool(_UNNATURAL_PREDICATE.search(summary or ""))
+
+
 def missing_required_elements(
     summary: str, title: str, *, min_chars: int = 35
 ) -> tuple[str, ...]:
     """機械的に確認できる必須要素の不足を返す（空なら合格）.
 
     AI レビューは6要素の最終判断を担うが、オンデバイスモデルが
-    「6要素あり」と誤判定することがある。最低文字数と見出しの固有語は
-    機械でも確認し、欠けていれば通知しない。理由／目的は記事に明記が
-    ない場合もあるため、AI レビューに委ねる。
+    「6要素あり」と誤判定することがある。最低文字数・見出しの固有語2つ
+    （主体と出来事名の手掛かり）・不自然な述語は機械でも確認し、欠けて
+    いれば通知しない。理由／目的は記事に明記がない場合もあるため、
+    AI レビューに委ねる。
     """
     text = (summary or "").strip()
     missing: list[str] = []
@@ -83,8 +93,12 @@ def missing_required_elements(
         missing.append("最低文字数")
     keywords = title_keywords(title)
     matched = [token for token in keywords if token in text]
-    if not matched:
+    # 見出しの固有語が1つだけ（用語のみなど）では主体が抜けやすい。
+    # 主体と出来事名を機械でも確認するため、2つ以上の一致を要求する。
+    if len(matched) < 2:
         missing.append("主体・出来事名")
+    if has_unnatural_predicate(text):
+        missing.append("不自然な述語")
     return tuple(missing)
 
 

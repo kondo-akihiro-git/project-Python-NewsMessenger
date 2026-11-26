@@ -63,6 +63,8 @@ REVIEW_SCHEMA = {
         "unsupported_claims": {"type": "array", "items": {"type": "string"}},
         "missing_facts": {"type": "array", "items": {"type": "string"}},
         "corrections": {"type": "array", "items": {"type": "string"}},
+        "keyword_explanation_ok": {"type": "boolean"},
+        "unexplained_terms": {"type": "array", "items": {"type": "string"}},
         "reason": {"type": "string"},
     },
     "required": [
@@ -71,6 +73,8 @@ REVIEW_SCHEMA = {
         "unsupported_claims",
         "missing_facts",
         "corrections",
+        "keyword_explanation_ok",
+        "unexplained_terms",
         "reason",
     ],
 }
@@ -121,6 +125,9 @@ class ReviewResult:
     corrections: tuple
     reason: str
     raw_text: str = ""
+    # 小学生が初見のキーワードに記事本文ベースの説明があるか。False なら不合格。
+    keyword_explanation_ok: bool = True
+    unexplained_terms: tuple = ()
 
 
 def render_prompt(template_path, variables):
@@ -362,7 +369,18 @@ def validate_review_payload(data, *, raw_text=""):
     unsupported_claims = _ensure_str_list(data, "unsupported_claims")
     missing_facts = _ensure_str_list(data, "missing_facts")
     corrections = _ensure_str_list(data, "corrections")
+    unexplained_terms = _ensure_str_list(data, "unexplained_terms")
     reason = _ensure_str(data, "reason")
+
+    keyword_explanation_ok = data.get("keyword_explanation_ok")
+    if not isinstance(keyword_explanation_ok, bool):
+        raise InvalidAIResponseError(
+            "必須フィールド 'keyword_explanation_ok' が不足しています。"
+        )
+    # AIがPASSと判定しても説明不足が応答されていれば、安全側に倒して不合格にする。
+    if not keyword_explanation_ok:
+        status = "FAIL"
+        issues = issues + ("初見キーワードの説明が要約にありません。",)
 
     return ReviewResult(
         status=status,
@@ -372,6 +390,8 @@ def validate_review_payload(data, *, raw_text=""):
         corrections=corrections,
         reason=reason,
         raw_text=raw_text,
+        keyword_explanation_ok=keyword_explanation_ok,
+        unexplained_terms=unexplained_terms,
     )
 
 

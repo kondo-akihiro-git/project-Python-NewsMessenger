@@ -103,7 +103,8 @@ def test_send_message_retries_on_500_then_succeeds() -> None:
     assert sleeps == [1.0, 3.0]
 
 
-def test_send_message_passes_text_link_entity_to_api() -> None:
+def test_send_message_sends_summary_text_without_link_entities() -> None:
+    """本番の通知は要約本文のみで、リンク entity を付けない。"""
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -115,20 +116,10 @@ def test_send_message_passes_text_link_entity_to_api() -> None:
         default_chat_id="987654321",
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    result = client.send_message(
-        "要約です。\n\n元記事を読む",
-        entities=[
-            {
-                "type": "text_link",
-                "offset": 7,
-                "length": 6,
-                "url": "https://example.com/news/1",
-            }
-        ],
-    )
+    result = client.send_message("会社が発表しました。", disable_web_page_preview=True)
     assert result.ok is True
-    assert captured["entities"][0]["type"] == "text_link"
-    assert captured["entities"][0]["url"] == "https://example.com/news/1"
+    assert captured["text"] == "会社が発表しました。"
+    assert "entities" not in captured
 
 
 def test_send_message_does_not_retry_on_401_and_hides_token() -> None:

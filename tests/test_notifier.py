@@ -9,7 +9,7 @@ import pytest
 
 from src.config import load_config
 from src.models import APPROVED, NOTIFICATION_FAILED, NOTIFIED, REVIEW_REJECTED, FeedItem, now_iso
-from src.notifier import ArticleNotifier, build_link_entity, build_notification_text
+from src.notifier import ArticleNotifier, build_notification_text
 from src.telegram_client import TelegramSendResult
 
 BASE_CONFIG = load_config(Path(__file__).resolve().parent.parent)
@@ -76,7 +76,7 @@ def approved_article(tmp_path: Path, status: str = APPROVED, notified_at: str = 
     return config, store
 
 
-def test_build_notification_text_separates_link(tmp_path: Path) -> None:
+def test_build_notification_text_is_summary_only(tmp_path: Path) -> None:
     config, store = approved_article(tmp_path)
     article = store.get("guid:guid-notify-1")
     assert article is not None
@@ -84,14 +84,10 @@ def test_build_notification_text_separates_link(tmp_path: Path) -> None:
     assert text == (
         "サンプル会社が新サービスを発表しました\n"
         "個人情報の漏えいを防ぐためです\n"
-        "警察に相談しました\n\n"
-        "元記事を読む"
+        "警察に相談しました"
     )
+    assert "元記事を読む" not in text
     assert "https://" not in text
-    entity = build_link_entity(text, article.url)
-    assert entity["type"] == "text_link"
-    assert entity["url"] == "https://example.com/news/1"
-    assert text[entity["offset"] : entity["offset"] + entity["length"]] == "元記事を読む"
 
 
 def test_build_notification_text_rejects_long_summary(tmp_path: Path) -> None:
@@ -132,9 +128,14 @@ def test_approved_article_is_sent_once_and_marked_notified(tmp_path: Path) -> No
     assert results[0].message_id == 77
     assert len(telegram.calls) == 1
     assert telegram.calls[0]["chat_id"] == "12345"
-    assert "元記事を読む" in telegram.calls[0]["text"]
+    assert telegram.calls[0]["text"] == (
+        "サンプル会社が新サービスを発表しました\n"
+        "個人情報の漏えいを防ぐためです\n"
+        "警察に相談しました"
+    )
+    assert "元記事を読む" not in telegram.calls[0]["text"]
     assert "https://" not in telegram.calls[0]["text"]
-    assert telegram.calls[0]["entities"][0]["type"] == "text_link"
+    assert telegram.calls[0]["entities"] is None
 
     saved = store.get("guid:guid-notify-1")
     assert saved is not None

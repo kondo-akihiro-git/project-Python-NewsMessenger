@@ -71,19 +71,6 @@ PATTERNS: tuple[NotificationPattern, ...] = (
             "会社は警察に相談し調査中。"
         ),
     ),
-    NotificationPattern(
-        key="with_url",
-        description="設計書 8-2 形式（要約4行 + 元記事リンク）",
-        text=(
-            "東京都足立区の会社が許可なく\n"
-            "システムに入られ、お客さんの\n"
-            "情報約5万件が外に流れ出た。\n"
-            "会社は警察に相談し調査中。\n"
-            "\n"
-            "元記事を読む\n"
-            "https://example.com/news/test-article"
-        ),
-    ),
 )
 
 
@@ -116,11 +103,10 @@ def main() -> int:
 
     if args.dry_run:
         for idx, p in enumerate(selected, 1):
-            body_only = p.text.split("\n\n元記事を読む")[0]
-            lines = body_only.splitlines()
+            lines = p.text.splitlines()
             print(
                 f"[{idx}/{len(selected)}] {p.key} ({p.description}) | "
-                f"要約文字数={len(body_only.replace(chr(10), ''))}文字 / 行数={len(lines)}行"
+                f"要約文字数={len(p.text.replace(chr(10), ''))}文字 / 行数={len(lines)}行"
             )
             print(p.text)
             print("-" * 40)
@@ -139,9 +125,8 @@ def main() -> int:
     client = TelegramClient(bot_token=bot_token, default_chat_id=chat_id, logger=logger)
 
     for idx, p in enumerate(selected, 1):
-        body_only = p.text.split("\n\n元記事を読む")[0]
-        char_count = len(body_only.replace("\n", ""))
-        line_count = len(body_only.splitlines())
+        char_count = len(p.text.replace("\n", ""))
+        line_count = len(p.text.splitlines())
         print(
             f"[{idx}/{len(selected)}] 送信中: {p.key} ({p.description}) "
             f"[要約{char_count}文字 / {line_count}行]"

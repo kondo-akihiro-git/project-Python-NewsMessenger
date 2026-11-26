@@ -124,6 +124,8 @@ def test_validate_review_payload_pass_and_fail() -> None:
             "unsupported_claims": [],
             "missing_facts": [],
             "corrections": [],
+            "keyword_explanation_ok": True,
+            "unexplained_terms": [],
             "reason": "正確です",
         }
     )
@@ -136,11 +138,48 @@ def test_validate_review_payload_pass_and_fail() -> None:
             "unsupported_claims": ["新宿区"],
             "missing_facts": [],
             "corrections": ["足立区に直す"],
+            "keyword_explanation_ok": True,
+            "unexplained_terms": [],
             "reason": "事実と異なる",
         }
     )
     assert fail.status == "FAIL"
     assert fail.unsupported_claims == ("新宿区",)
+
+
+def test_keyword_explanation_failure_forces_review_fail() -> None:
+    """AIがPASSと返しても説明不足が応答されれば不合格にする。"""
+    result = validate_review_payload(
+        {
+            "status": "PASS",
+            "issues": [],
+            "unsupported_claims": [],
+            "missing_facts": [],
+            "corrections": [],
+            "keyword_explanation_ok": False,
+            "unexplained_terms": ["dots"],
+            "reason": "問題ありません",
+        }
+    )
+    assert result.status == "FAIL"
+    assert result.keyword_explanation_ok is False
+    assert result.unexplained_terms == ("dots",)
+    assert any("説明" in issue for issue in result.issues)
+
+
+def test_review_requires_keyword_explanation_field() -> None:
+    with pytest.raises(InvalidAIResponseError, match="keyword_explanation_ok"):
+        validate_review_payload(
+            {
+                "status": "PASS",
+                "issues": [],
+                "unsupported_claims": [],
+                "missing_facts": [],
+                "corrections": [],
+                "unexplained_terms": [],
+                "reason": "問題ありません",
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

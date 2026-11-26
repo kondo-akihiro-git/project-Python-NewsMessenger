@@ -30,3 +30,11 @@ def test_missing_required_elements_rejects_short_summary():
     summary = "悪意あるルーターの攻撃を確認しました。"
     missing = missing_required_elements(summary, title)
     assert "最低文字数" in missing
+    assert "主体・出来事名" in missing
+
+
+def test_missing_required_elements_rejects_unnatural_predicate():
+    title = "米OpenAIがdotsを解禁　月額3000円"
+    summary = "米OpenAIがdotsという常時稼働AIエージェントの提供を開始するとしました。月額は3000円です。"
+    missing = missing_required_elements(summary, title)
+    assert "不自然な述語" in missing

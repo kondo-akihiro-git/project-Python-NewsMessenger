@@ -227,6 +227,7 @@ class NewsPipeline:
                 "UNSUPPORTED_CLAIMS": "、".join(review.unsupported_claims) or "なし",
                 "MISSING_FACTS": "、".join(review.missing_facts) or "なし",
                 "CORRECTIONS": "、".join(review.corrections) or "なし",
+                "UNEXPLAINED_TERMS": "、".join(review.unexplained_terms) or "なし",
             },
         )
         try:

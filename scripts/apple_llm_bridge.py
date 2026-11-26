@@ -51,7 +51,13 @@ def main() -> int:
                 for key, spec in schema.get("properties", {}).items():
                     if key == "status" or key in output:
                         continue
-                    output[key] = [] if spec.get("type") == "array" else ""
+                    if spec.get("type") == "array":
+                        output[key] = []
+                    elif spec.get("type") == "boolean":
+                        # 説明確認が欠けた場合は不合格扱いにしてフェイルクローズする。
+                        output[key] = False
+                    else:
+                        output[key] = ""
                 output = json.dumps(output, ensure_ascii=False)
             else:
                 output = llm.text(prompt)

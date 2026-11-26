@@ -107,6 +107,17 @@
   - `src/notifier.py`: 送信前にも必須要素ガードを適用。
 - **検証**: `pytest -q tests/` → **76件PASS**。実RSS 108件取得 → 実記事をAIレビュー承認 → Telegram送信成功（要約51文字・述語終わり・URLなし）。弱い要約（19文字）はガードで拒否されることを確認。launchd は再試験中のみ無効化し、完了後に再有効化済み。
 
+### 通知を要約のみへ＋初見キーワード説明の必須化（2026-11-26）
+- **ユーザー指示**: 「元記事を読む」などのリンク構成をやめ、要約文章のみを通知する。小学生が初見のキーワードには必ず説明を加える。
+- **Changed**:
+  - `src/notifier.py`: 通知本文を要約のみに変更。`build_link_entity()` と `text_link` entity の付与を削除。
+  - `config/prompts/{summarize,review,revise,shorten}.txt`: 初見キーワードの説明を必須化。「〜としました」等の不自然な述語と主体の欠落を禁止。55文字内の並べ方例を追加。
+  - `src/ai_client.py`: `REVIEW_SCHEMA` に `keyword_explanation_ok` / `unexplained_terms` を追加。PASS でも説明不足なら FAIL に上書きし、修正ループへ渡す。
+  - `src/text_quality.py`: 見出しの固有語2つ以上・不自然な述語を機械ガードに追加。
+  - `scripts/apple_llm_bridge.py`: 真偽フィールドが欠けた場合は `false` を補完し、フェイルクローズする。
+  - `scripts/test_telegram_notify.py`: リンク付きパターンを削除。
+- **検証**: **79件PASS**。dots の実記事で説明入り要約（45文字）を生成・承認・実送信。通知本文にリンクなし。
+
 ### Changed
 - Phase 2 実機通知テストの結果を反映し、要約目標を「3行以内・合計45〜55文字目安」、要約本文へのリンク混入禁止（末尾に分離配置）へ仕様確定。
 - AI呼び出しが1〜3分かかる実測を反映し、`max_articles_per_run` を 5→1 に変更。

@@ -72,6 +72,8 @@ def make_review(
         missing_facts=tuple(kwargs.get("missing_facts", ())),
         corrections=tuple(kwargs.get("corrections", ())),
         reason=reason,
+        keyword_explanation_ok=kwargs.get("keyword_explanation_ok", True),
+        unexplained_terms=tuple(kwargs.get("unexplained_terms", ())),
     )
 
 
@@ -182,7 +184,13 @@ def test_fail_then_revise_then_pass(tmp_path: Path) -> None:
             make_summary(text=GOOD_SUMMARY),
         ],
         reviews=[
-            make_review("FAIL", "根拠のない表現があります", issues=["推測"]),
+            make_review(
+                "FAIL",
+                "根拠のない表現があります",
+                issues=["推測"],
+                keyword_explanation_ok=False,
+                unexplained_terms=["dots"],
+            ),
             make_review("PASS", "修正されました"),
         ],
     )
@@ -197,6 +205,7 @@ def test_fail_then_revise_then_pass(tmp_path: Path) -> None:
     assert ai.calls == ["summarize", "review", "revise", "review"]
     assert FIRST_SUMMARY in ai.prompts[2]
     assert "推測" in ai.prompts[2]
+    assert "説明が不足している用語: dots" in ai.prompts[2]
 
 
 def test_all_reviews_fail_is_rejected(tmp_path: Path) -> None:

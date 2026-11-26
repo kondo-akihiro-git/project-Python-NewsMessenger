@@ -22,12 +22,6 @@ from src.text_quality import has_taigen_dome, missing_required_elements
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 _MAX_NOTIFY_RETRIES = 3
 _MAX_SUMMARY_LINES = 3
-_LINK_LABEL = "元記事を読む"
-
-
-def _utf16_len(text: str) -> int:
-    """Telegram の offset/length は UTF-16 コード単位で指定する."""
-    return len(text.encode("utf-16-le")) // 2
 
 
 @dataclass(frozen=True)
@@ -45,10 +39,10 @@ class NotificationResult:
 
 
 def build_notification_text(article: Article, max_chars: int = 55) -> str:
-    """要約本文（URLなし）＋リンク文言の短い通知テキストを生成する.
+    """要約本文だけの通知テキストを生成する.
 
-    URL 本文を入れず `text_link` entity でリンクを付けるため、通知プレビューで
-    要約が省略されない。要約が空・URL混入・行数または文字数超過の場合は通知しない。
+    ユーザー指示により、リンク文言・URL・`text_link` entity は一切付けない。
+    要約が空・URL混入・行数または文字数超過の場合は通知しない。
     """
     summary = (article.summary or "").strip()
     if not summary:
@@ -70,21 +64,7 @@ def build_notification_text(article: Article, max_chars: int = 55) -> str:
         raise ValueError(
             "要約に必須要素が不足しているため通知しません: " + "、".join(missing)
         )
-    if not (article.url or "").strip():
-        raise ValueError("元記事URLが空のため通知しません。")
-    return f"{normalized}\n\n{_LINK_LABEL}"
-
-
-def build_link_entity(text: str, url: str) -> dict[str, Any]:
-    """通知テキスト末尾のリンク文言に text_link を付与する."""
-    length = _utf16_len(_LINK_LABEL)
-    offset = _utf16_len(text) - length
-    return {
-        "type": "text_link",
-        "offset": offset,
-        "length": length,
-        "url": url,
-    }
+    return normalized
 
 
 class ArticleNotifier:
@@ -153,7 +133,6 @@ class ArticleNotifier:
                 text,
                 chat_id=self.config.chat_id,
                 disable_web_page_preview=self.config.telegram_disable_web_page_preview,
-                entities=[build_link_entity(text, article.url)],
             )
         except Exception as exc:  # noqa: BLE001 - 送信失敗は状態に記録して継続
             message = f"Telegram送信失敗: {type(exc).__name__}: {exc}"
