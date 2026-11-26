@@ -348,7 +348,8 @@ class ShortcutAIClient:
         timeout_seconds: float = 240.0,
         # 実測で2回では55文字に届かないことが多いため、具体的な短縮指示付きで最大5回試行する。
         max_json_retries: int = 4,
-        retry_delay_seconds: float = 1.0,
+        # Apple Intelligence の連続呼び出しは失敗しやすいため、再試行間隔を長めに取る。
+        retry_delay_seconds: float = 5.0,
         # list_shortcuts 専用: subprocess.run 互換の呼び出し可能オブジェクト
         list_runner: Optional[Callable] = None,
         # run_shortcut 専用: subprocess.Popen 互換の呼び出し可能オブジェクト
@@ -624,6 +625,11 @@ class ShortcutAIClient:
                                 "\n\n【再生成指示】前回の要約に体言止めがありました。"
                                 "各行を述語で終え、6要素と55文字以内を維持してください。"
                             )
+                    else:
+                        # JSON解析失敗や出力の途切れは、長い再生成指示プロンプト自体が
+                        # 原因になることがある。次の試行は元のプロンプトに戻す。
+                        retry_prompt = prompt_text
+                        previous_summary = ""
                     if self._retry_delay > 0:
                         self._sleep(self._retry_delay)
 
