@@ -70,6 +70,13 @@ def test_validate_summary_payload_accepts_3_lines_without_url() -> None:
     assert len(res.summary.splitlines()) == 3
 
 
+def test_extract_json_object_repairs_japanese_closing_quote() -> None:
+    raw = '{"status":"PASS","issues":[],"reason":"問題ありません。」}'
+    parsed = extract_json_object(raw)
+    assert parsed["status"] == "PASS"
+    assert parsed["reason"] == "問題ありません。"
+
+
 def test_validate_summary_payload_rejects_taigen_dome() -> None:
     base = {
         "status": "OK",

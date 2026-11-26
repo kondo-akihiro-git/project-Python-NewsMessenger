@@ -54,7 +54,7 @@
   - `src/text_quality.py`（新規）: `has_taigen_dome()` で代表的な名詞語尾を検出。
   - `src/ai_client.py`: 要約検証時に体言止めを拒否し再生成対象に。
   - `src/notifier.py`: 送信前の最終検査でも体言止めを拒否。
-  - `tests/test_ai_client.py` / `tests/test_notifier.py` にテスト追加（全53件PASS）。
+  - `tests/test_ai_client.py` / `tests/test_notifier.py` にテスト追加（全54件PASS）。
 - ドキュメントを追加・更新:
   - `docs/MASTER_DESIGN.md`（ユーザー提供の詳細設計書原本）
   - `docs/DECISIONS.md`（設計判断・ユーザー指示の記録）
@@ -64,6 +64,10 @@
 - 実機検証で、新プロンプトの出力が `summary` 直後で切れる問題を確認。要約自体は述語終わりで体言止め解消。
   - `src/ai_client.py`: 既定 `timeout_seconds` 60→240秒、`max_wait` 90→180秒に延長し、不完全JSONなら追加ポーリング。
   - `config/config.example.yaml`: `ai.timeout_seconds: 240` に更新（実測 要約97秒／レビュー193秒）。
+- 実機ログで確認した Apple Intelligence の出力揺れに対応:
+  - 体言止めルールの例示を簡潔化し、プロンプト全体を短縮。
+  - `src/ai_client.py`: 文字列の閉じ引用符が日本語の鉤括弧（`」`）になった JSON を修復する候補を追加（後段の厳密検証は維持）。
+  - `tests/test_ai_client.py` に修復テストを追加（全54件PASS）。
 
 ### Changed
 - Phase 2 実機通知テストの結果を反映し、要約目標を「3行以内・合計45〜55文字目安」、要約本文へのリンク混入禁止（末尾に分離配置）へ仕様確定。

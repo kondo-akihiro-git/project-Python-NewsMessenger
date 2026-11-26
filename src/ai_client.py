@@ -166,6 +166,11 @@ def extract_json_object(raw_text):
     repaired = repair_json_string_control_chars(cleaned)
     if repaired != cleaned:
         candidates.append(repaired)
+    # Apple Intelligence が文字列の閉じ引用符を日本語の鉤括弧で出力することがある。
+    # 区切り記号の直前だけを ASCII 引用符に置き換えた候補も試す（検証は後段で厳密に行う）。
+    japanese_quote_repaired = re.sub(r"」(?=\s*[,}\]])", '"', cleaned)
+    if japanese_quote_repaired != cleaned and japanese_quote_repaired not in candidates:
+        candidates.append(japanese_quote_repaired)
 
     for candidate in candidates:
         try:
