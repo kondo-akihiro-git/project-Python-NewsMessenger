@@ -180,6 +180,40 @@ def extract_json_object(raw_text):
         except json.JSONDecodeError:
             pass
 
+    # 最後の手段: Apple Intelligence が status/summary 直後に出力を切り上げた場合。
+    # 事実を補うのではなく、欠落メタフィールドを「不明」/空として明示的に埋める。
+    # 要約本文はAIの実出力を保持し、事実確認は後段のレビューAIが行う。
+    # 体言止め・文字数・空文字などの検査は validate_summary_payload が行うため、
+    # この復旧だけで通知が通るわけではない（フェイルクローズは維持）。
+    truncated = re.match(
+        r'^\s*\{\s*"status"\s*:\s*"(OK|INSUFFICIENT)"\s*,\s*"summary"\s*:\s*"'
+        r'((?:[^"\\]|\\.)*?)"\s*,?\s*$',
+        cleaned,
+        re.DOTALL,
+    )
+    if truncated:
+        status, summary = truncated.group(1), truncated.group(2)
+        try:
+            summary = json.loads(f'"{summary}"')
+        except json.JSONDecodeError:
+            summary = summary.replace("\\n", "\n")
+        # 要約が空の切り上げは復旧しない（validate前にフェイルクローズ）。
+        if summary.strip():
+            candidates.append(
+                json.dumps(
+                    {
+                        "status": status,
+                        "summary": summary,
+                        "key_facts": [],
+                        "reason": "不明",
+                        "location": "不明",
+                        "numbers": [],
+                        "uncertainties": ["AI出力が途中で終了したため詳細は不明"],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
     decoder = json.JSONDecoder()
     for candidate in candidates:
         for idx, ch in enumerate(candidate):
@@ -522,10 +556,11 @@ class ShortcutAIClient:
     ) -> Any:
         attempts = self._max_json_retries + 1
         last_exc = None
+        retry_prompt = prompt_text
 
         for attempt in range(1, attempts + 1):
             try:
-                raw_output = self.run_shortcut(shortcut_name, prompt_text)
+                raw_output = self.run_shortcut(shortcut_name, retry_prompt)
                 parsed = extract_json_object(raw_output)
                 return validator(parsed, raw_output)
             except (ShortcutNotFoundError, AIRateLimitError):
@@ -539,8 +574,18 @@ class ShortcutAIClient:
                     attempts,
                     exc,
                 )
-                if attempt < attempts and self._retry_delay > 0:
-                    self._sleep(self._retry_delay)
+                if attempt < attempts:
+                    # 文字数・行数超過は同じプロンプトを rebuild しても繰り返すため、
+                    # 次回試行にのみ「短くする」指示を付ける。事実の追加は指示しない。
+                    message = str(exc)
+                    if "上限文字数" in message or "行を超えています" in message:
+                        retry_prompt = (
+                            prompt_text
+                            + "\n\n【再生成指示】前回の要約は文字数または行数を超えていました。"
+                            + "記事の事実と述語で終えるルールは維持したまま、指定の上限以内に短くしてください。"
+                        )
+                    if self._retry_delay > 0:
+                        self._sleep(self._retry_delay)
 
         assert last_exc is not None
         raise last_exc

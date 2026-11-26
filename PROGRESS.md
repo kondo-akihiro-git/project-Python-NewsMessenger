@@ -68,7 +68,7 @@
 ### 追加修正（2026-11-26: 体言止めの全面禁止・ドキュメント整備・Git公開）
 - **ユーザー指摘**: 以前から「ニュースに体言止めを入れないで」と依頼していたが、採用要約 `復旧を1時間以内に終える目標` は体言止めだった。
 - **修正**: `summarize.txt` / `review.txt` / `revise.txt` に「体言止めは1行でも禁止・述語で終える」と明記。`src/text_quality.py::has_taigen_dome()` を新設し、要約検証時と通知前の両方で拒否（フェイルクローズ）。
-- **テスト**: 体言止め拒否のテストを追加し、既存フィクスチャも述語終わりへ修正 → **54件PASS**（日本語鉤括弧のJSON修復テスト含む）。
+- **テスト**: 体言止め拒否のテストを追加し、既存フィクスチャも述語終わりへ修正 → **57件PASS**（日本語鉤括弧のJSON修復テスト含む）。
 - **ドキュメント**: `docs/MASTER_DESIGN.md`（設計書原本）, `docs/DECISIONS.md`（判断記録）, `docs/SETUP_ANY_PC.md`（別Mac再開手順）を新規作成。`AGENTS.md` / `README.md` / `DESIGN.md` / `CHANGELOG.md` を更新。
 - **Git**: `git init` → 初回コミット → 公開リポジトリ `project-Python-NewsMessenger` へプッシュ（認証情報・`data/`・`logs/` は除外）。
 
@@ -89,7 +89,7 @@
 5. **設定ファイル**: `config/config.yaml` は未作成で `config.example.yaml` にフォールバック中。
 
 ## 5. 最後に成功したテスト・確認コマンド
-- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `54 passed in 6.51s`
+- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `57 passed in 6.50s`
 - `launchctl print gui/501/com.aki.news-telegram` → `state = not running`, `run interval = 300 seconds`
 - 新要約の実検証 → 45文字・6要素を含む要約を生成、短縮通知を送信（`message_id=22`）
 - `/Users/aki/.pyenv/versions/3.10.12/bin/python3 main.py --check-only` → `OK: 設定・ショートカット・DB初期化を確認しました。`

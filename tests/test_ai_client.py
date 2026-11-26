@@ -362,6 +362,57 @@ def test_extract_json_object_repairs_raw_newlines_in_string() -> None:
     assert parsed["summary"] == "1行目\n2行目\n3行目"
 
 
+def test_extract_json_object_recovers_truncated_summary_payload() -> None:
+    """status/summary直後で出力が切れても、要約本文を残して不明を明示すること。"""
+    raw = '{"status":"OK","summary":"会社が障害を宣言しました。\\n復旧を終えるとしています。",'
+    parsed = extract_json_object(raw)
+    assert parsed["status"] == "OK"
+    assert parsed["summary"] == "会社が障害を宣言しました。\n復旧を終えるとしています。"
+    assert parsed["key_facts"] == []
+    assert parsed["reason"] == "不明"
+    assert "AI出力が途中で終了" in parsed["uncertainties"][0]
+
+
+def test_extract_json_object_does_not_recover_empty_summary() -> None:
+    """要約が空で切り上げられた場合は復旧候補を作らないこと。"""
+    raw = '{"status":"OK","summary":"",'
+    with pytest.raises(InvalidAIResponseError):
+        extract_json_object(raw)
+
+
+def test_length_failure_adds_shortening_instruction_on_retry() -> None:
+    """文字数超過の再試行では、短くする指示のみを付け、事実追加は指示しないこと。"""
+    base = {
+        "status": "OK",
+        "summary": "あ" * 60,
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    fixed = dict(base, summary="短くまとめました。")
+    payloads = [
+        json.dumps(base, ensure_ascii=False),
+        json.dumps(fixed, ensure_ascii=False),
+    ]
+    prompts: list[str] = []
+
+    def fake_run(shortcut, prompt):
+        prompts.append(prompt)
+        return payloads[len(prompts) - 1]
+
+    client = ShortcutAIClient(
+        summarize_shortcut="News_Summarize", max_json_retries=1, retry_delay_seconds=0.0
+    )
+    client.run_shortcut = fake_run
+    result = client.summarize("base prompt", max_chars=55)
+    assert len(prompts) == 2
+    assert "再生成指示" in prompts[1]
+    assert "上限以内に短くしてください" in prompts[1]
+    assert result.summary == "短くまとめました。"
+
+
 def test_read_stable_output_waits_for_complete_json(tmp_path: Path) -> None:
     """途中まで書き込まれたJSONを採用せず、完全な出力まで待つこと。"""
     out = tmp_path / "out.txt"

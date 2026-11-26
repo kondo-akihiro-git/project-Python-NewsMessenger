@@ -90,7 +90,7 @@
     - `httpx` の既定ではリダイレクトを追跡せず、Yahoo!ニュースの `pickup` URL（302）で本文取得が失敗した。
     - `RSSClient` / `ContentExtractor` の両方に `follow_redirects=True` を設定し、リダイレクト追跡の単体テストを追加。
 5. **最終検証結果**
-    - `pytest -q tests/`: 51件PASS（その後、体言止めガード追加で54件PASS）。
+    - `pytest -q tests/`: 51件PASS（その後、体言止めガード追加で57件PASS）。
     - `main.py --check-only`: ショートカット登録・設定・DB初期化を確認。
     - `main.py --limit 1 --no-notify`: RSS新着108件、記事1件をレビューPASS → `APPROVED`。
     - 実Telegram通知: `message_id=21`、`NOTIFIED` を確認。
@@ -124,7 +124,7 @@
     - `src/text_quality.py` を新設し、`has_taigen_dome()` で一般的な名詞語尾（目標／可能性／対応 等）を検出。
     - `src/ai_client.py`: 要約JSON検証時に体言止めを検出したら `InvalidAIResponseError`（リトライ対象）。
     - `src/notifier.py`: 送信前の最終検査でも体言止めを拒否（既存DB要約を含むフェイルクローズ）。
-    - `tests/test_ai_client.py` / `tests/test_notifier.py`: 体言止め拒否のテストを追加。既存フィクスチャの要約も述語終わりへ修正。**54件PASS**。
+    - `tests/test_ai_client.py` / `tests/test_notifier.py`: 体言止め拒否のテストを追加。既存フィクスチャの要約も述語終わりへ修正。**57件PASS**。
 3. **ドキュメント・Git**
     - `docs/MASTER_DESIGN.md`: ユーザー提供の設計書原本を全文保存。
     - `docs/DECISIONS.md`: これまでの判断・認識（体言止め、6要素、通知仕様、有料API禁止、launchd等）を記録。
@@ -134,4 +134,12 @@
     - 新プロンプトで要約を実行すると、AIの生出力が `summary` の直後（`"summary":"...",`）で切れて JSON 解析に失敗した。要約本文自体は述語終わり（`〜掲げました。`）で体言止めは解消されていた。
     - 原因: `shortcuts run` プロセス終了後も「モデルを使用」の出力ファイルへの書き込みが続くが、待ち上限が90秒では不足していた。
     - 修正: `ShortcutAIClient` の既定 `timeout_seconds` を 60→240秒、`max_wait` を 90→180秒に延長。不完全JSONの場合はさらに同一ファイルを再ポーリングする二段構えに変更。`config/config.example.yaml` も `ai.timeout_seconds: 240` に更新。
-    - テスト53件は引き続きPASS。
+    - テストは引き続きPASS（現時点で56件）。
+5. **JSON切り上げへのフェイルクローズ対応**
+    - 待ち延長後も3回とも `summary` 直後で出力が終わるため、`extract_json_object()` に復旧候補を追加。
+    - 復旧では事実を補わず、欠落メタフィールドを `key_facts: []` / `reason: 不明` / `location: 不明` / `numbers: []` / `uncertainties: [AI出力が途中で終了したため詳細は不明]` と明示する。要約本文はAIの実出力を保持。
+    - 体言止め・文字数・空文字の検査（`validate_summary_payload()`）とレビューAIの事実照合は従来どおり実施。復旧だけでは通知は通らず、フェイルクローズは維持。
+    - 実出力の要約は66文字で `max_summary_chars: 55` を超過するため、この記事単体では依然として通知されない（既知問題として `PROGRESS.md` に記録）。
+    - 切り上げの原因の一つとして、プロンプトの出力形式にコード側で未使用の `event` / `target` / `action` / `purpose` が含まれJSONが長かった点を特定。`summarize.txt` / `revise.txt` から削除し、6要素は要約本文に含めるルールは維持。
+    - 文字数・行数超過で再試行する場合、次回試行のプロンプトにのみ「上限以内に短くしてください」という再生成指示を付与。事実の追加は指示せず、述語で終えるルールとレビューによる事実照合は維持。
+    - テスト57件PASS。
