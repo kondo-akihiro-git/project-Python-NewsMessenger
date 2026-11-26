@@ -54,7 +54,7 @@
   - `src/text_quality.py`（新規）: `has_taigen_dome()` で代表的な名詞語尾を検出。
   - `src/ai_client.py`: 要約検証時に体言止めを拒否し再生成対象に。
   - `src/notifier.py`: 送信前の最終検査でも体言止めを拒否。
-  - `tests/test_ai_client.py` / `tests/test_notifier.py` にテスト追加（全58件PASS）。
+  - `tests/test_ai_client.py` / `tests/test_notifier.py` にテスト追加（全59件PASS）。
 - ドキュメントを追加・更新:
   - `docs/MASTER_DESIGN.md`（ユーザー提供の詳細設計書原本）
   - `docs/DECISIONS.md`（設計判断・ユーザー指示の記録）
@@ -67,17 +67,22 @@
 - 実機ログで確認した Apple Intelligence の出力揺れに対応:
   - 体言止めルールの例示を簡潔化し、プロンプト全体を短縮。
   - `src/ai_client.py`: 文字列の閉じ引用符が日本語の鉤括弧（`」`）になった JSON を修復する候補を追加（後段の厳密検証は維持）。
-  - `tests/test_ai_client.py` に修復テストを追加（全58件PASS）。
+  - `tests/test_ai_client.py` に修復テストを追加（全59件PASS）。
 - 要約JSONが `summary` 直後で切れる問題への追加対応:
   - `src/ai_client.py`: status/summary 後に出力が終了した場合、事実を補わず欠落メタフィールドを「不明」/空として明示する復旧候補を追加。要約本文はAI実出力を保持し、体言止め・文字数・空文字の検査とレビューAIの事実照合は従来どおり実施（フェイルクローズ維持）。空要約は復旧しない。
   - `config/prompts/{summarize,revise}.txt`: コード側で使われていない `event` / `target` / `action` / `purpose` フィールドを出力形式から削除し、JSONを短縮して切り上げリスクを低減。6要素は要約本文に含めるルールは維持。
-  - `tests/test_ai_client.py` に切り上げ復旧テスト（成功・空要約拒否）を追加（全58件PASS）。
+  - `tests/test_ai_client.py` に切り上げ復旧テスト（成功・空要約拒否）を追加（全59件PASS）。
 - 要約が文字数・行数を超えた場合の再試行を改善:
   - `src/ai_client.py`: 次回試行のプロンプトにのみ「上限以内に短くしてください」という再生成指示を付与。事実の追加は指示せず、述語で終えるルールとレビューによる事実照合は維持。
-  - `tests/test_ai_client.py` に再試行時プロンプトの検証テストを追加（全58件PASS）。
+  - `tests/test_ai_client.py` に再試行時プロンプトの検証テストを追加（全59件PASS）。
 - `location` / `reason` が文字列ではなく文字列配列で返されるケースに対応:
   - `src/ai_client.py::_ensure_str()` で配列を連結して正規化（事実の追加はしない）。
-  - `tests/test_ai_client.py` に正規化テストを追加（全58件PASS）。
+  - `tests/test_ai_client.py` に正規化テストを追加（全59件PASS）。
+- ユーザー明示: 「55文字も6要素もどちらも絶対に守る」。文字数上限の緩和・6要素の削減は行わない方針を記録。
+  - `config/prompts/summarize.txt` / `revise.txt`: 文字数ルールを最優先に配置し、行ごとの文字数目安と「事実を削らず言い換える」具体例を追加。6要素は「削らず短い言い換えで残す」と明記。
+  - `src/ai_client.py`: 文字数超過時の再試行で、直前の要約本文と実際の文字数を渡し、6要素と述語を残した言い換えを指示するよう改善。
+  - 体言止め検出時も再試行対象とし、直前の要約を渡して各行を述語で終えるよう具体的に指示。エラー文言に問題の要約を含める。
+  - 実機で「文字数を優先しすぎて助詞・述語が落ちる」出力を確認したため、プロンプト最優先項目に「助詞・述語を削って文字数を稼いではならない」と明記。
 
 ### Changed
 - Phase 2 実機通知テストの結果を反映し、要約目標を「3行以内・合計45〜55文字目安」、要約本文へのリンク混入禁止（末尾に分離配置）へ仕様確定。

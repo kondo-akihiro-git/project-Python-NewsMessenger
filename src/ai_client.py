@@ -287,7 +287,10 @@ def validate_summary_payload(data, *, max_lines=3, max_chars=90, raw_text=""):
                 f"要約が上限文字数 ({max_chars}文字) を超えています ({char_count}文字)。"
             )
         if has_taigen_dome(normalized_summary):
-            raise InvalidAIResponseError("要約に体言止め（名詞で終わる行）が含まれています。")
+            raise InvalidAIResponseError(
+                "要約に体言止め（名詞で終わる行）が含まれています: "
+                f"{normalized_summary!r}"
+            )
         summary = normalized_summary
 
     return SummaryResult(
@@ -561,11 +564,14 @@ class ShortcutAIClient:
         attempts = self._max_json_retries + 1
         last_exc = None
         retry_prompt = prompt_text
+        previous_summary = ""
 
         for attempt in range(1, attempts + 1):
             try:
                 raw_output = self.run_shortcut(shortcut_name, retry_prompt)
                 parsed = extract_json_object(raw_output)
+                if isinstance(parsed.get("summary"), str):
+                    previous_summary = parsed["summary"]
                 return validator(parsed, raw_output)
             except (ShortcutNotFoundError, AIRateLimitError):
                 raise
@@ -579,15 +585,40 @@ class ShortcutAIClient:
                     exc,
                 )
                 if attempt < attempts:
-                    # 文字数・行数超過は同じプロンプトを rebuild しても繰り返すため、
-                    # 次回試行にのみ「短くする」指示を付ける。事実の追加は指示しない。
+                    # 文字数・行数超過は同じプロンプトを再実行しても再現するため、
+                    # 直前に生成された要約そのものを渡し、事実を残した言い換えを指示する。
                     message = str(exc)
                     if "上限文字数" in message or "行を超えています" in message:
-                        retry_prompt = (
-                            prompt_text
-                            + "\n\n【再生成指示】前回の要約は文字数または行数を超えていました。"
-                            + "記事の事実と述語で終えるルールは維持したまま、指定の上限以内に短くしてください。"
-                        )
+                        retry_prompt = prompt_text
+                        if previous_summary:
+                            over = len(previous_summary.replace("\n", ""))
+                            retry_prompt += (
+                                f"\n\n【再生成指示】前回の要約は{over}文字で上限を超えました。"
+                                f"前回の要約:\n{previous_summary}\n"
+                                "この要約の主体・出来事・対象・理由・対応・目的と述語をすべて残したまま、"
+                                "言い換えて上限以内に短くしてください。事実を削ってはいけません。"
+                            )
+                        else:
+                            retry_prompt += (
+                                "\n\n【再生成指示】前回の要約は上限を超えていました。"
+                                "6要素と述語を維持したまま、指定の上限以内に短くしてください。"
+                            )
+                    elif "体言止め" in message:
+                        # 名詞止めは行ごとの問題なので、直前の要約を渡して述語の付け方を具体的に指示する。
+                        retry_prompt = prompt_text
+                        if previous_summary:
+                            retry_prompt += (
+                                "\n\n【再生成指示】前回の要約に体言止め（名詞で終わる行）がありました。"
+                                f"前回の要約:\n{previous_summary}\n"
+                                "各行を必ず述語（〜しました／〜します／〜です）で終えてください。"
+                                "6要素と事実は残したまま、述語を付けるために必要なら他の表現を短くしてください。"
+                                "文字数は55文字以内を守ってください。"
+                            )
+                        else:
+                            retry_prompt += (
+                                "\n\n【再生成指示】前回の要約に体言止めがありました。"
+                                "各行を述語で終え、6要素と55文字以内を維持してください。"
+                            )
                     if self._retry_delay > 0:
                         self._sleep(self._retry_delay)
 

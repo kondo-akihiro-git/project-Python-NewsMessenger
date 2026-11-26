@@ -425,8 +425,42 @@ def test_length_failure_adds_shortening_instruction_on_retry() -> None:
     result = client.summarize("base prompt", max_chars=55)
     assert len(prompts) == 2
     assert "再生成指示" in prompts[1]
+    assert "60文字で上限を超えました" in prompts[1]
+    assert "あ" * 60 in prompts[1]
     assert "上限以内に短くしてください" in prompts[1]
+    assert "事実を削ってはいけません" in prompts[1]
     assert result.summary == "短くまとめました。"
+
+
+def test_taigen_failure_adds_predicate_instruction_on_retry() -> None:
+    """体言止めの再試行では、直前の要約を渡して述語で終えるよう指示すること。"""
+    base = {
+        "status": "OK",
+        "summary": "会社が障害を発表し、対応を検討",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    fixed = dict(base, summary="会社が障害を発表しました。")
+    payloads = [json.dumps(base, ensure_ascii=False), json.dumps(fixed, ensure_ascii=False)]
+    prompts: list[str] = []
+
+    def fake_run(shortcut, prompt):
+        prompts.append(prompt)
+        return payloads[len(prompts) - 1]
+
+    client = ShortcutAIClient(
+        summarize_shortcut="News_Summarize", max_json_retries=1, retry_delay_seconds=0.0
+    )
+    client.run_shortcut = fake_run
+    result = client.summarize("base prompt", max_chars=55)
+    assert len(prompts) == 2
+    assert "体言止め" in prompts[1]
+    assert "会社が障害を発表し、対応を検討" in prompts[1]
+    assert "述語（〜しました／〜します／〜です）で終えてください" in prompts[1]
+    assert result.summary == "会社が障害を発表しました。"
 
 
 def test_read_stable_output_waits_for_complete_json(tmp_path: Path) -> None:
