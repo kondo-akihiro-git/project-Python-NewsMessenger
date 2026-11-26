@@ -66,8 +66,7 @@ def approved_article(tmp_path: Path, status: str = APPROVED, notified_at: str = 
     assert article is not None
     article.summary = (
         "サンプル会社が新サービスを発表しました\n"
-        "個人情報の漏えいを防ぐためです\n"
-        "警察に相談しました"
+        "個人情報の漏えいを防ぐため、警察に相談しました"
     )
     store.update(article)
     store.set_status(
@@ -83,8 +82,7 @@ def test_build_notification_text_is_summary_only(tmp_path: Path) -> None:
     text = build_notification_text(article)
     assert text == (
         "サンプル会社が新サービスを発表しました\n"
-        "個人情報の漏えいを防ぐためです\n"
-        "警察に相談しました"
+        "個人情報の漏えいを防ぐため、警察に相談しました"
     )
     assert "元記事を読む" not in text
     assert "https://" not in text
@@ -103,7 +101,7 @@ def test_build_notification_text_rejects_taigen_dome(tmp_path: Path) -> None:
     config, store = approved_article(tmp_path)
     article = store.get("guid:guid-notify-1")
     assert article is not None
-    article.summary = "米マイクロソフトがコードレッドを宣言\n大規模障害で対応を見直します\n復旧を1時間以内に終えます"
+    article.summary = "米マイクロソフトがコードレッドを宣言しました\n大規模障害で対応を見直し"
     with pytest.raises(ValueError, match="体言止め"):
         build_notification_text(article, max_chars=55)
 
@@ -130,8 +128,7 @@ def test_approved_article_is_sent_once_and_marked_notified(tmp_path: Path) -> No
     assert telegram.calls[0]["chat_id"] == "12345"
     assert telegram.calls[0]["text"] == (
         "サンプル会社が新サービスを発表しました\n"
-        "個人情報の漏えいを防ぐためです\n"
-        "警察に相談しました"
+        "個人情報の漏えいを防ぐため、警察に相談しました"
     )
     assert "元記事を読む" not in telegram.calls[0]["text"]
     assert "https://" not in telegram.calls[0]["text"]

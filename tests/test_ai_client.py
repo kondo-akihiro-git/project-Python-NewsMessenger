@@ -55,10 +55,10 @@ def test_extract_json_object_from_code_fence_and_prose() -> None:
 # validate_summary_payload
 # ---------------------------------------------------------------------------
 
-def test_validate_summary_payload_accepts_3_lines_without_url() -> None:
+def test_validate_summary_payload_accepts_2_lines_without_url() -> None:
     data = {
         "status": "OK",
-        "summary": "足立区の会社が攻撃を受けました。\nお客さんの情報約5万件が漏れました。\n会社は警察に相談しました。",
+        "summary": "足立区の会社が攻撃を受けました、\nお客さんの情報約5万件が漏れ、警察に相談しました。",
         "key_facts": ["約5万件流出"],
         "reason": "システムの脆弱性を突かれた",
         "location": "東京都足立区",
@@ -67,7 +67,7 @@ def test_validate_summary_payload_accepts_3_lines_without_url() -> None:
     }
     res = validate_summary_payload(data)
     assert res.status == "OK"
-    assert len(res.summary.splitlines()) == 3
+    assert len(res.summary.splitlines()) == 2
 
 
 def test_extract_json_object_repairs_japanese_closing_quote() -> None:
@@ -90,12 +90,81 @@ def test_validate_summary_payload_rejects_taigen_dome() -> None:
         validate_summary_payload(
             {
                 **base,
-                "summary": "米マイクロソフトがコードレッドを宣言\n大規模障害で対応を見直します\n復旧を1時間以内に終えます",
+                "summary": "米マイクロソフトがコードレッドを宣言しました\n大規模障害で対応を見直し",
             }
         )
 
 
-def test_validate_summary_payload_rejects_url_and_over_3_lines() -> None:
+def test_validate_summary_payload_rejects_vague_evaluation_and_missing_what() -> None:
+    """NTTドコモ/藤井総務省の低品質要約と同種の表現を拒否する。"""
+    base = {
+        "status": "OK",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(InvalidAIResponseError, match="根拠のない評価"):
+        validate_summary_payload(
+            {
+                **base,
+                "summary": "NTTドコモへの信頼が揺らぎつつあります。\n藤井総務相が原因究明を求めました。",
+            }
+        )
+    with pytest.raises(InvalidAIResponseError, match="WHO/WHAT"):
+        validate_summary_payload(
+            {
+                **base,
+                "summary": "NTTドコモが原因究明を求めました。\n詳しい理由は不明です。",
+            }
+        )
+
+
+def test_validate_summary_payload_rejects_unexplained_term_and_role_only() -> None:
+    base = {
+        "status": "OK",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(InvalidAIResponseError, match="初見用語"):
+        validate_summary_payload(
+            {
+                **base,
+                "summary": "NTTドコモは11月に5G SAで通信障害が発生しました。藤井総務相が調べます。",
+            }
+        )
+    with pytest.raises(InvalidAIResponseError, match="役職"):
+        validate_summary_payload(
+            {
+                **base,
+                "summary": "NTTドコモは11月に通信障害が発生しました。総務相が再発防止を求めました。",
+            }
+        )
+
+
+def test_validate_summary_payload_rejects_multiple_events() -> None:
+    base = {
+        "status": "OK",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(InvalidAIResponseError, match="複数イベント"):
+        validate_summary_payload(
+            {
+                **base,
+                "summary": "11月にNTTドコモで3度の通信障害が発生しました。藤井総務相が再発防止を求めました。",
+            }
+        )
+
+
+def test_validate_summary_payload_rejects_url_and_over_2_lines() -> None:
     base = {
         "status": "OK",
         "key_facts": [],
@@ -107,7 +176,7 @@ def test_validate_summary_payload_rejects_url_and_over_3_lines() -> None:
     with pytest.raises(InvalidAIResponseError):
         validate_summary_payload({**base, "summary": "要約です https://example.com"})
     with pytest.raises(InvalidAIResponseError):
-        validate_summary_payload({**base, "summary": "1行目\n2行目\n3行目\n4行目"})
+        validate_summary_payload({**base, "summary": "1行目\n2行目\n3行目"})
     with pytest.raises(InvalidAIResponseError):
         validate_summary_payload({**base, "summary": "要約：本文です。"})
 
@@ -126,6 +195,10 @@ def test_validate_review_payload_pass_and_fail() -> None:
             "corrections": [],
             "keyword_explanation_ok": True,
             "unexplained_terms": [],
+            "concrete_basis_ok": True,
+            "four_w_one_h_ok": True,
+            "single_event_ok": True,
+            "missing_4w1h": [],
             "reason": "正確です",
         }
     )
@@ -140,6 +213,10 @@ def test_validate_review_payload_pass_and_fail() -> None:
             "corrections": ["足立区に直す"],
             "keyword_explanation_ok": True,
             "unexplained_terms": [],
+            "concrete_basis_ok": True,
+            "four_w_one_h_ok": True,
+            "single_event_ok": True,
+            "missing_4w1h": [],
             "reason": "事実と異なる",
         }
     )
@@ -158,6 +235,10 @@ def test_keyword_explanation_failure_forces_review_fail() -> None:
             "corrections": [],
             "keyword_explanation_ok": False,
             "unexplained_terms": ["dots"],
+            "concrete_basis_ok": True,
+            "four_w_one_h_ok": True,
+            "single_event_ok": True,
+            "missing_4w1h": [],
             "reason": "問題ありません",
         }
     )
@@ -165,6 +246,49 @@ def test_keyword_explanation_failure_forces_review_fail() -> None:
     assert result.keyword_explanation_ok is False
     assert result.unexplained_terms == ("dots",)
     assert any("説明" in issue for issue in result.issues)
+
+
+def _review_data(**overrides):
+    data = {
+        "status": "PASS",
+        "issues": [],
+        "unsupported_claims": [],
+        "missing_facts": [],
+        "corrections": [],
+        "keyword_explanation_ok": True,
+        "unexplained_terms": [],
+        "concrete_basis_ok": True,
+        "four_w_one_h_ok": True,
+        "single_event_ok": True,
+        "missing_4w1h": [],
+        "reason": "問題ありません",
+    }
+    data.update(overrides)
+    return data
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"concrete_basis_ok": False}, "裏付け"),
+        ({"four_w_one_h_ok": False}, "4W1H"),
+        ({"missing_4w1h": ["WHO", "WHAT"]}, "WHO"),
+        ({"single_event_ok": False}, "1つに絞られていません"),
+    ],
+)
+def test_review_quality_flags_force_fail(overrides, expected) -> None:
+    """PASSでも品質フラグが不合格ならFAILへ上書きする。"""
+    result = validate_review_payload(_review_data(**overrides))
+    assert result.status == "FAIL"
+    assert any(expected in issue for issue in result.issues)
+    assert expected in result.reason
+
+
+def test_review_requires_new_quality_fields() -> None:
+    data = _review_data()
+    del data["concrete_basis_ok"]
+    with pytest.raises(InvalidAIResponseError, match="concrete_basis_ok"):
+        validate_review_payload(data)
 
 
 def test_review_requires_keyword_explanation_field() -> None:
@@ -188,7 +312,7 @@ def test_review_requires_keyword_explanation_field() -> None:
 
 _GOOD_SUMMARY_PAYLOAD = {
     "status": "OK",
-    "summary": "足立区の会社から情報約5万件が漏れました。\n会社は警察に相談しました。",
+    "summary": "足立区の会社から情報約5万件が漏れ、警察に相談しました。",
     "key_facts": ["約5万件流出"],
     "reason": "不正アクセス",
     "location": "東京都足立区",
@@ -541,6 +665,39 @@ def test_compact_retry_template_is_used_with_previous_summary() -> None:
     assert prompts[1] == f"短縮: {long_summary} / 60文字 / 55文字以内"
     assert "base prompt" not in prompts[1]
     assert result.summary == "短くまとめました。"
+
+
+def test_quality_failure_uses_compact_retry_template() -> None:
+    """品質ガード抵触時も長い元プロンプトへ戻さず、短縮プロンプトで修正する。"""
+    base = {
+        "status": "OK",
+        "summary": "NTTドコモは11月に5G SAで3度の障害を起こしました。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    fixed = dict(
+        base, summary="NTTドコモは5G SAという5G専用設備で3度の障害を起こしました。"
+    )
+    payloads = [json.dumps(base, ensure_ascii=False), json.dumps(fixed, ensure_ascii=False)]
+    prompts: list[str] = []
+
+    def fake_run(shortcut, prompt):
+        prompts.append(prompt)
+        return payloads[len(prompts) - 1]
+
+    template = "修正: {{PREVIOUS_SUMMARY}} / {{FAILURE_INSTRUCTION}}"
+    client = ShortcutAIClient(
+        summarize_shortcut="News_Summarize", max_json_retries=1, retry_delay_seconds=0.0
+    )
+    client.run_shortcut = fake_run
+    result = client.summarize("base prompt", max_chars=55, retry_template=template)
+    assert len(prompts) == 2
+    assert "base prompt" not in prompts[1]
+    assert "初見用語" in prompts[1]
+    assert result.summary == fixed["summary"]
 
 
 def test_read_stable_output_waits_for_complete_json(tmp_path: Path) -> None:

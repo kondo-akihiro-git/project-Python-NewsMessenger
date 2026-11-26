@@ -21,7 +21,7 @@ from src.text_quality import has_taigen_dome, missing_required_elements
 
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 _MAX_NOTIFY_RETRIES = 3
-_MAX_SUMMARY_LINES = 3
+_MAX_SUMMARY_LINES = 2
 
 
 @dataclass(frozen=True)

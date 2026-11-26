@@ -19,10 +19,19 @@ from src.models import (
     SUMMARY_FAILED,
     FeedItem,
 )
-from src.pipeline import NewsPipeline
+from src.pipeline import NewsPipeline, _limited_body
 from src.rss_client import FeedFetchResult
 
 BASE_CONFIG: Config = load_config(Path(__file__).resolve().parent.parent)
+
+
+def test_limited_body_cuts_at_sentence_boundary():
+    """AIへ渡す本文は関連記事を除き450文字以内・文途中で切らない。"""
+    body = "A" * 200 + "。\n" + "B" * 800 + "。\n" + "Copyright © ITmedia, Inc."
+    limited = _limited_body(body)
+    assert len(limited) <= 450
+    assert limited.startswith("A" * 200 + "。")
+    assert "Copyright" not in limited
 
 
 def make_config(tmp_path: Path, **overrides) -> Config:
@@ -37,14 +46,12 @@ def make_config(tmp_path: Path, **overrides) -> Config:
 
 FIRST_SUMMARY = (
     "サンプル会社が発表しました\n"
-    "個人情報の漏えいを防ぐためです\n"
-    "警察に相談しました"
+    "個人情報の漏えいを防ぐため、警察に相談しました"
 )
 
 GOOD_SUMMARY = (
     "サンプル会社が新サービスを発表しました\n"
-    "個人情報の漏えいを防ぐためです\n"
-    "警察に相談しました"
+    "個人情報の漏えいを防ぐため、警察に相談しました"
 )
 
 
@@ -74,6 +81,10 @@ def make_review(
         reason=reason,
         keyword_explanation_ok=kwargs.get("keyword_explanation_ok", True),
         unexplained_terms=tuple(kwargs.get("unexplained_terms", ())),
+        concrete_basis_ok=kwargs.get("concrete_basis_ok", True),
+        four_w_one_h_ok=kwargs.get("four_w_one_h_ok", True),
+        single_event_ok=kwargs.get("single_event_ok", True),
+        missing_4w1h=tuple(kwargs.get("missing_4w1h", ())),
     )
 
 
@@ -206,6 +217,33 @@ def test_fail_then_revise_then_pass(tmp_path: Path) -> None:
     assert FIRST_SUMMARY in ai.prompts[2]
     assert "推測" in ai.prompts[2]
     assert "説明が不足している用語: dots" in ai.prompts[2]
+
+
+def test_quality_flags_are_passed_to_revise(tmp_path: Path) -> None:
+    ai = FakeAI(
+        summaries=[make_summary(text=FIRST_SUMMARY), make_summary(text=GOOD_SUMMARY)],
+        reviews=[
+            make_review(
+                "FAIL",
+                "評価と複数イベントが不合格",
+                concrete_basis_ok=False,
+                four_w_one_h_ok=False,
+                single_event_ok=False,
+                missing_4w1h=["WHO", "WHAT"],
+            ),
+            make_review("PASS", "修正されました"),
+        ],
+    )
+    pipeline = build_pipeline(tmp_path, ai)
+    article = pipeline.store.get("guid:guid-pipeline-1")
+    assert article is not None
+
+    result = pipeline.process_one(article)
+    assert result.approved is True
+    revise_prompt = ai.prompts[2]
+    assert "WHAT" in revise_prompt
+    assert "根拠なし" in revise_prompt
+    assert "複数イベント" in revise_prompt
 
 
 def test_all_reviews_fail_is_rejected(tmp_path: Path) -> None:

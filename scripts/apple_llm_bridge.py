@@ -54,7 +54,7 @@ def main() -> int:
                     if spec.get("type") == "array":
                         output[key] = []
                     elif spec.get("type") == "boolean":
-                        # 説明確認が欠けた場合は不合格扱いにしてフェイルクローズする。
+                        # 品質確認の真偽値が欠けた場合は不合格扱いにしてフェイルクローズする。
                         output[key] = False
                     else:
                         output[key] = ""

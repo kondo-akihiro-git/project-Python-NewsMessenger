@@ -2,6 +2,18 @@
 
 ## [Unreleased] - 2026-11-25
 
+### Fixed (2026-11-26: 低品質通知の再発防止)
+
+- `config/config.example.yaml` / `src/config.py`: 要約を **55文字以内・最大2行**（1行目=主要ニュース、2行目=補足のみ）へ変更。
+- `config/prompts/{summarize,review,revise,shorten}.txt`: 4W1H必須・氏名必須・根拠なき評価禁止・単一イベント・初見キーワード説明（5G SA 等）を明記。
+- `src/ai_client.py`: `REVIEW_SCHEMA` / `ReviewResult` に `concrete_basis_ok`, `four_w_one_h_ok`, `single_event_ok`, `missing_4w1h` を追加。PASSでも不合格フラグなら FAIL へ上書きし、要約JSON検証でも曖昧表現・WHO/WHAT欠落・未説明用語・役職のみ・複数イベントを拒否。
+- `src/text_quality.py`: 2行超、根拠なき評価、同一文に無いWHO/WHAT、初見用語未説明、役職のみ／誤役職、独立した複数イベントの機械ガードを追加。
+- `src/pipeline.py`: レビューの新フラグを修正プロンプトへ渡す。`src/notifier.py`: 送信前検査を2行へ統一。
+- `src/text_quality.py::trim_related_articles()`: ITmedia の著作権行・アクセスランキング以降も除去し、関連記事由来の事実混入を防ぐ（実記事で3113→1457文字）。
+- `src/pipeline.py`: オンデバイス模型の4096トークン制限に合わせ、AIへ渡す本文を文境界で450文字までに制限（リード文と用語説明は保持）。ガイド付きJSONのスキーマ分を含め要約プロンプトを4019→約3010文字へ短縮し、コンテキスト超過を解消。
+- `src/ai_client.py`: 品質ガード抵触時の再生成でも短い専用プロンプトへ失敗理由を渡し、長文追記によるコンテキスト超過を防ぐ。`config/prompts/shorten.txt` に `{{FAILURE_INSTRUCTION}}` を追加。
+- `tests/`: NTTドコモ／藤井総務省の低品質要約と同種の再現ケース、AI誤PASSの上書き、複数イベント拒否、ITmediaフッター除去、本文制限、品質失敗時の短縮再生成を追加。**97件PASS**。
+
 ### Added
 - Phase 1（環境調査）を実施し、macOS / Python / `shortcuts` CLI / Telegram 環境を確認。
 - プロジェクト初期ディレクトリ `/Users/aki/.gemini/antigravity/scratch/news-telegram` を作成。

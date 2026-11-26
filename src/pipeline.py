@@ -35,6 +35,26 @@ from src.models import (
 )
 from src.rss_client import RSSClient
 
+# オンデバイス Foundation Models のコンテキスト窓は4096トークン。
+# ガイド付きJSON生成ではスキーマ分のオーバーヘッドがあり、実測で
+# 要約プロンプト全体は約3100文字が上限（それ以上で ContextLengthError）。
+# プロンプト本体（要約2557文字）と合わせて超過しないよう、
+# AIへ渡す本文は記事のリード文と用語説明を含む先頭450文字までに制限する。
+# 記事の重要な事実は冒頭に集中しており、後半の関連話題は要約に不要。
+_MAX_AI_BODY_CHARS = 450
+
+
+def _limited_body(text: str) -> str:
+    """関連記事を除き、文の途中で切れないよう本文を短くする。"""
+    body = trim_related_articles(text)
+    if len(body) <= _MAX_AI_BODY_CHARS:
+        return body
+    cut = body[:_MAX_AI_BODY_CHARS]
+    boundary = max(cut.rfind("。"), cut.rfind("\n"))
+    if boundary >= _MAX_AI_BODY_CHARS // 2:
+        cut = cut[: boundary + 1]
+    return cut.strip()
+
 
 @dataclass(frozen=True)
 class PipelineResult:
@@ -110,7 +130,7 @@ class NewsPipeline:
         # プロンプトへ渡す直前に本文だけを残す（DB の保存内容は変更しない）。
         cleaned = dict(variables)
         if "ARTICLE_BODY" in cleaned:
-            cleaned["ARTICLE_BODY"] = trim_related_articles(cleaned["ARTICLE_BODY"])
+            cleaned["ARTICLE_BODY"] = _limited_body(cleaned["ARTICLE_BODY"])
         path = self.prompts_dir / f"{name}.txt"
         return render_prompt(path, cleaned)
 
@@ -228,6 +248,10 @@ class NewsPipeline:
                 "MISSING_FACTS": "、".join(review.missing_facts) or "なし",
                 "CORRECTIONS": "、".join(review.corrections) or "なし",
                 "UNEXPLAINED_TERMS": "、".join(review.unexplained_terms) or "なし",
+                "MISSING_4W1H": "、".join(review.missing_4w1h) or "なし",
+                "FOUR_W_ONE_H_OK": "OK" if review.four_w_one_h_ok else "不足",
+                "CONCRETE_BASIS_OK": "OK" if review.concrete_basis_ok else "根拠なし",
+                "SINGLE_EVENT_OK": "OK" if review.single_event_ok else "複数イベント",
             },
         )
         try:

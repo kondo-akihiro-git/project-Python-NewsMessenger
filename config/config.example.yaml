@@ -25,7 +25,7 @@ feeds:
 
 content:
   min_chars_guideline: 400     # 本文文字数の目安（短い記事はレビュー判定併用）
-  max_summary_lines: 3         # Phase 2 実機検証に基づく目標行数（3行以内）
+  max_summary_lines: 2         # 1行目=最重要ニュース、2行目=補足のみ（2行以内）
   max_summary_chars: 55        # iPhone通知で省略されない上限（目標45〜55文字、重要キーワード優先）
 
 ai:

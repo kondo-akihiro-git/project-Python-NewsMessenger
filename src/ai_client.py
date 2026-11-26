@@ -13,7 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from src.text_quality import has_taigen_dome
+from src.text_quality import (
+    has_multiple_events,
+    has_role_without_name,
+    has_taigen_dome,
+    has_vague_evaluation,
+    missing_who_what,
+    unexplained_terms,
+)
 
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 _CODE_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
@@ -65,6 +72,10 @@ REVIEW_SCHEMA = {
         "corrections": {"type": "array", "items": {"type": "string"}},
         "keyword_explanation_ok": {"type": "boolean"},
         "unexplained_terms": {"type": "array", "items": {"type": "string"}},
+        "concrete_basis_ok": {"type": "boolean"},
+        "four_w_one_h_ok": {"type": "boolean"},
+        "single_event_ok": {"type": "boolean"},
+        "missing_4w1h": {"type": "array", "items": {"type": "string"}},
         "reason": {"type": "string"},
     },
     "required": [
@@ -75,6 +86,10 @@ REVIEW_SCHEMA = {
         "corrections",
         "keyword_explanation_ok",
         "unexplained_terms",
+        "concrete_basis_ok",
+        "four_w_one_h_ok",
+        "single_event_ok",
+        "missing_4w1h",
         "reason",
     ],
 }
@@ -128,6 +143,11 @@ class ReviewResult:
     # 小学生が初見のキーワードに記事本文ベースの説明があるか。False なら不合格。
     keyword_explanation_ok: bool = True
     unexplained_terms: tuple = ()
+    # 曖昧表現に裏付けがあるか、4W1Hが揃っているか、主要ニュースが1つか。
+    concrete_basis_ok: bool = True
+    four_w_one_h_ok: bool = True
+    single_event_ok: bool = True
+    missing_4w1h: tuple = ()
 
 
 def render_prompt(template_path, variables):
@@ -292,6 +312,15 @@ def _ensure_str_list(data, key):
     return tuple(str(item).strip() for item in val if str(item).strip())
 
 
+def _ensure_bool(data, key):
+    if key not in data:
+        raise InvalidAIResponseError(f"必須フィールド '{key}' が不足しています。")
+    val = data[key]
+    if not isinstance(val, bool):
+        raise InvalidAIResponseError(f"フィールド '{key}' は真偽値である必要があります。")
+    return val
+
+
 def _ensure_str(data, key):
     if key not in data:
         raise InvalidAIResponseError(f"必須フィールド '{key}' が不足しています。")
@@ -305,7 +334,7 @@ def _ensure_str(data, key):
     return val.strip()
 
 
-def validate_summary_payload(data, *, max_lines=3, max_chars=90, raw_text=""):
+def validate_summary_payload(data, *, max_lines=2, max_chars=55, raw_text=""):
     """要約AIのJSON出力を検査して SummaryResult を返す."""
     status = _ensure_str(data, "status").upper()
     if status not in ("OK", "INSUFFICIENT"):
@@ -345,6 +374,31 @@ def validate_summary_payload(data, *, max_lines=3, max_chars=90, raw_text=""):
                 "要約に体言止め（名詞で終わる行）が含まれています: "
                 f"{normalized_summary!r}"
             )
+        if has_vague_evaluation(normalized_summary):
+            raise InvalidAIResponseError(
+                "要約に具体的な根拠のない評価表現が含まれています: "
+                f"{normalized_summary!r}"
+            )
+        if missing_who_what(normalized_summary):
+            raise InvalidAIResponseError(
+                "要約に WHO/WHAT（誰が・何について）が不足しています: "
+                f"{normalized_summary!r}"
+            )
+        terms = unexplained_terms(normalized_summary)
+        if terms:
+            raise InvalidAIResponseError(
+                "要約に説明のない初見用語があります: " + "、".join(terms)
+            )
+        if has_role_without_name(normalized_summary):
+            raise InvalidAIResponseError(
+                "要約に固有名詞のない役職表現があります: "
+                f"{normalized_summary!r}"
+            )
+        if has_multiple_events(normalized_summary):
+            raise InvalidAIResponseError(
+                "要約に独立した複数イベントが含まれています: "
+                f"{normalized_summary!r}"
+            )
         summary = normalized_summary
 
     return SummaryResult(
@@ -372,15 +426,27 @@ def validate_review_payload(data, *, raw_text=""):
     unexplained_terms = _ensure_str_list(data, "unexplained_terms")
     reason = _ensure_str(data, "reason")
 
-    keyword_explanation_ok = data.get("keyword_explanation_ok")
-    if not isinstance(keyword_explanation_ok, bool):
-        raise InvalidAIResponseError(
-            "必須フィールド 'keyword_explanation_ok' が不足しています。"
-        )
-    # AIがPASSと判定しても説明不足が応答されていれば、安全側に倒して不合格にする。
+    keyword_explanation_ok = _ensure_bool(data, "keyword_explanation_ok")
+    concrete_basis_ok = _ensure_bool(data, "concrete_basis_ok")
+    four_w_one_h_ok = _ensure_bool(data, "four_w_one_h_ok")
+    single_event_ok = _ensure_bool(data, "single_event_ok")
+    missing_4w1h = _ensure_str_list(data, "missing_4w1h")
+
+    # AIがPASSと判定しても、以下が応答されていれば安全側に倒して不合格にする。
+    forced_issues: list[str] = []
     if not keyword_explanation_ok:
+        forced_issues.append("初見キーワードの説明が要約にありません。")
+    if not concrete_basis_ok:
+        forced_issues.append("具体的な裏付けのない評価表現があります。")
+    if not four_w_one_h_ok or missing_4w1h:
+        detail = "、".join(missing_4w1h) if missing_4w1h else "WHO/WHAT など"
+        forced_issues.append(f"4W1Hが不足しています: {detail}")
+    if not single_event_ok:
+        forced_issues.append("主要ニュースが1つに絞られていません。")
+    if forced_issues:
         status = "FAIL"
-        issues = issues + ("初見キーワードの説明が要約にありません。",)
+        issues = issues + tuple(forced_issues)
+        reason = (reason + " " + " ".join(forced_issues)).strip()
 
     return ReviewResult(
         status=status,
@@ -392,6 +458,10 @@ def validate_review_payload(data, *, raw_text=""):
         raw_text=raw_text,
         keyword_explanation_ok=keyword_explanation_ok,
         unexplained_terms=unexplained_terms,
+        concrete_basis_ok=concrete_basis_ok,
+        four_w_one_h_ok=four_w_one_h_ok,
+        single_event_ok=single_event_ok,
+        missing_4w1h=missing_4w1h,
     )
 
 
@@ -630,7 +700,7 @@ class ShortcutAIClient:
         prompt_text: str,
         validator: Callable,
         *,
-        max_chars: int = 90,
+        max_chars: int = 55,
         retry_template: Optional[str] = None,
     ) -> Any:
         attempts = self._max_json_retries + 1
@@ -638,8 +708,12 @@ class ShortcutAIClient:
         retry_prompt = prompt_text
         previous_summary = ""
 
-        def compact_retry() -> Optional[str]:
-            """必要なら短い専用プロンプトで再生成する（長文追記は無視されやすい）。"""
+        def compact_retry(instruction: str = "") -> Optional[str]:
+            """短い専用プロンプトへ失敗理由を渡して再生成する。
+
+            オンデバイス模型はコンテキストが4096トークンまでなので、
+            長い元プロンプトへ説明を追記すると ContextLengthError になる。
+            """
             if not retry_template or not previous_summary:
                 return None
             over = len(previous_summary.replace("\n", ""))
@@ -649,6 +723,10 @@ class ShortcutAIClient:
                 .replace("{{OVER_CHARS}}", str(over))
                 .replace("{{MAX_CHARS}}", str(max_chars))
                 .replace("{{NEED_CHARS}}", str(need))
+                .replace(
+                    "{{FAILURE_INSTRUCTION}}",
+                    instruction or "前回の要約の問題点を修正してください。",
+                )
             )
 
         for attempt in range(1, attempts + 1):
@@ -696,7 +774,9 @@ class ShortcutAIClient:
                                 )
                     elif "体言止め" in message:
                         # 名詞止めは行ごとの問題なので、直前の要約を渡して述語の付け方を具体的に指示する。
-                        compact = compact_retry()
+                        compact = compact_retry(
+                            "前回の要約に体言止めがありました。各行を述語（〜しました／〜します／〜です）で終えてください。"
+                        )
                         if compact:
                             retry_prompt = compact
                         else:
@@ -713,6 +793,40 @@ class ShortcutAIClient:
                                 retry_prompt += (
                                     "\n\n【再生成指示】前回の要約に体言止めがありました。"
                                     "各行を述語で終え、6要素と55文字以内を維持してください。"
+                                )
+                    elif any(
+                        keyword in message
+                        for keyword in (
+                            "根拠のない評価",
+                            "WHO/WHAT",
+                            "4W1H",
+                            "単一",
+                            "複数イベント",
+                            "初見用語",
+                            "役職",
+                        )
+                    ):
+                        compact = compact_retry(
+                            "前回の要約は品質ガードに抵触しました。"
+                            "1行目に主要ニュース（誰が・何を）を書き、2行目はその補足だけにしてください。"
+                            "独立した出来事は1文にまとめ、別主体の行動を別文にしないでください。"
+                            "根拠のない評価表現を削り、記事に明記された出来事と数値を入れてください。"
+                            "役職だけを書かずに固有名詞を入れ、初見用語には「という」で記事の意味を説明してください。"
+                            "6要素・述語・55文字以内は維持してください。"
+                        )
+                        if compact:
+                            retry_prompt = compact
+                        else:
+                            retry_prompt = prompt_text
+                            if previous_summary:
+                                retry_prompt += (
+                                    "\n\n【再生成指示】前回の要約は品質ガードに抵触しました。"
+                                    f"前回の要約:\n{previous_summary}\n"
+                                    "1行目に主要ニュース（誰が・何を）を書き、2行目はその補足だけにしてください。"
+                                    "独立した出来事は1文にまとめ、別主体の行動を別文にしないでください。"
+                                    "根拠のない評価表現を削り、記事に明記された出来事と数値を入れてください。"
+                                    "役職だけを書かずに固有名詞を入れ、初見用語には「という」で記事の意味を説明してください。"
+                                    "6要素・述語・55文字以内は維持してください。"
                                 )
                     else:
                         # JSON解析失敗や出力の途切れは、長い再生成指示プロンプト自体が
@@ -733,8 +847,8 @@ class ShortcutAIClient:
         self,
         prompt_text: str,
         *,
-        max_lines: int = 3,
-        max_chars: int = 90,
+        max_lines: int = 2,
+        max_chars: int = 55,
         retry_template: Optional[str] = None,
     ) -> SummaryResult:
         """News_Summarize ショートカットを実行して要約結果を返す."""
@@ -760,8 +874,8 @@ class ShortcutAIClient:
         self,
         prompt_text: str,
         *,
-        max_lines: int = 3,
-        max_chars: int = 90,
+        max_lines: int = 2,
+        max_chars: int = 55,
     ) -> SummaryResult:
         """修正プロンプトを要約ショートカットへ渡し、修正済み要約を返す.
 
