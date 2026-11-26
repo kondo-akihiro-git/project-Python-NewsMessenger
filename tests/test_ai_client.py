@@ -1,0 +1,379 @@
+"""ShortcutAIClient および JSON/プロンプト検証の単体テスト."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import threading
+import time
+from io import StringIO
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from src.ai_client import (
+    AIClientError,
+    AIRateLimitError,
+    AITimeoutError,
+    InvalidAIResponseError,
+    ShortcutAIClient,
+    ShortcutNotFoundError,
+    extract_json_object,
+    render_prompt,
+    validate_review_payload,
+    validate_summary_payload,
+)
+
+
+# ---------------------------------------------------------------------------
+# render_prompt
+# ---------------------------------------------------------------------------
+
+def test_render_prompt_preserves_json_braces(tmp_path: Path) -> None:
+    tpl = tmp_path / "p.txt"
+    tpl.write_text('{"status": "OK"}\n見出し: {{TITLE}}\n本文: {{ARTICLE_BODY}}', encoding="utf-8")
+    rendered = render_prompt(tpl, {"TITLE": "テスト", "ARTICLE_BODY": "内容です。"})
+    assert '{"status": "OK"}' in rendered
+    assert "見出し: テスト" in rendered
+    assert "本文: 内容です。" in rendered
+
+
+# ---------------------------------------------------------------------------
+# extract_json_object
+# ---------------------------------------------------------------------------
+
+def test_extract_json_object_from_code_fence_and_prose() -> None:
+    raw = 'はい、結果はこちらです。\n```json\n{"status": "OK", "summary": "要約です。"}\n```\n以上です。'
+    parsed = extract_json_object(raw)
+    assert parsed["status"] == "OK"
+    assert parsed["summary"] == "要約です。"
+
+
+# ---------------------------------------------------------------------------
+# validate_summary_payload
+# ---------------------------------------------------------------------------
+
+def test_validate_summary_payload_accepts_3_lines_without_url() -> None:
+    data = {
+        "status": "OK",
+        "summary": "足立区の会社が攻撃を受け、\nお客さんの情報約5万件が\n外に流れ出たと発表した。",
+        "key_facts": ["約5万件流出"],
+        "reason": "システムの脆弱性を突かれた",
+        "location": "東京都足立区",
+        "numbers": ["約5万件"],
+        "uncertainties": ["詳しい侵入経路"],
+    }
+    res = validate_summary_payload(data)
+    assert res.status == "OK"
+    assert len(res.summary.splitlines()) == 3
+
+
+def test_validate_summary_payload_rejects_taigen_dome() -> None:
+    base = {
+        "status": "OK",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(InvalidAIResponseError, match="体言止め"):
+        validate_summary_payload(
+            {
+                **base,
+                "summary": "米マイクロソフトが宣言した\n大規模障害を受けた\n復旧を1時間以内に終える目標",
+            }
+        )
+
+
+def test_validate_summary_payload_rejects_url_and_over_3_lines() -> None:
+    base = {
+        "status": "OK",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(InvalidAIResponseError):
+        validate_summary_payload({**base, "summary": "要約です https://example.com"})
+    with pytest.raises(InvalidAIResponseError):
+        validate_summary_payload({**base, "summary": "1行目\n2行目\n3行目\n4行目"})
+    with pytest.raises(InvalidAIResponseError):
+        validate_summary_payload({**base, "summary": "要約：本文です。"})
+
+
+# ---------------------------------------------------------------------------
+# validate_review_payload
+# ---------------------------------------------------------------------------
+
+def test_validate_review_payload_pass_and_fail() -> None:
+    ok = validate_review_payload(
+        {
+            "status": "PASS",
+            "issues": [],
+            "unsupported_claims": [],
+            "missing_facts": [],
+            "corrections": [],
+            "reason": "正確です",
+        }
+    )
+    assert ok.status == "PASS"
+
+    fail = validate_review_payload(
+        {
+            "status": "FAIL",
+            "issues": ["数値誤り"],
+            "unsupported_claims": ["新宿区"],
+            "missing_facts": [],
+            "corrections": ["足立区に直す"],
+            "reason": "事実と異なる",
+        }
+    )
+    assert fail.status == "FAIL"
+    assert fail.unsupported_claims == ("新宿区",)
+
+
+# ---------------------------------------------------------------------------
+# Popen モック用ヘルパー
+# ---------------------------------------------------------------------------
+
+_GOOD_SUMMARY_PAYLOAD = {
+    "status": "OK",
+    "summary": "足立区の会社から情報約5万件が\n外に流れ出たと発表された。",
+    "key_facts": ["約5万件流出"],
+    "reason": "不正アクセス",
+    "location": "東京都足立区",
+    "numbers": ["約5万件"],
+    "uncertainties": [],
+}
+
+
+def _make_popen(cmd, *, returncode=0, stdout="", stderr="", output_payload=None, write_delay=0.0):
+    """fake Popen を返すファクトリ関数を返す。
+    output_payload が指定されると --output-path にその内容を書き込む。
+    write_delay > 0 なら別スレッドで遅延書き込みする（非同期出力のシミュレーション）。
+    """
+    out_path = None
+    if "--output-path" in cmd:
+        out_idx = cmd.index("--output-path") + 1
+        out_path = Path(cmd[out_idx])
+
+    def _write():
+        if write_delay > 0:
+            time.sleep(write_delay)
+        if out_path is not None and output_payload is not None:
+            out_path.write_text(json.dumps(output_payload, ensure_ascii=False), encoding="utf-8")
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = returncode
+
+    def communicate(timeout=None):
+        t = threading.Thread(target=_write, daemon=True)
+        t.start()
+        t.join(timeout=max((write_delay or 0) + 1.0, 2.0))
+        return stdout, stderr
+
+    mock_proc.communicate = communicate
+    mock_proc.kill = MagicMock()
+    return mock_proc
+
+
+def _popen_factory_ok(payload=None, write_delay=0.0):
+    """成功レスポンスを返す popen_factory を生成する。"""
+    p = payload or _GOOD_SUMMARY_PAYLOAD
+
+    def factory(cmd, **kwargs):
+        return _make_popen(cmd, output_payload=p, write_delay=write_delay)
+
+    return factory
+
+
+def _popen_factory_error(returncode=1, stderr="Error: shortcuts failed"):
+    def factory(cmd, **kwargs):
+        return _make_popen(cmd, returncode=returncode, stderr=stderr)
+
+    return factory
+
+
+# ---------------------------------------------------------------------------
+# ShortcutAIClient — run_shortcut 正常系
+# ---------------------------------------------------------------------------
+
+def test_run_shortcut_reads_output_file(tmp_path: Path) -> None:
+    """出力ファイルに書かれた内容が返ること。"""
+    client = ShortcutAIClient(
+        popen_factory=_popen_factory_ok(),
+        retry_delay_seconds=0.0,
+        poll_interval=0.05,
+        stable_for=0.1,
+        max_wait=2.0,
+    )
+    result = client.run_shortcut("News_Summarize", "テスト入力")
+    assert "status" in result  # JSON テキストが返る
+
+
+def test_run_shortcut_waits_for_async_write(tmp_path: Path) -> None:
+    """非同期書き込み（遅延0.3秒）でも正常に読み取れること。"""
+    client = ShortcutAIClient(
+        popen_factory=_popen_factory_ok(write_delay=0.3),
+        retry_delay_seconds=0.0,
+        poll_interval=0.05,
+        stable_for=0.15,
+        max_wait=3.0,
+    )
+    result = client.run_shortcut("News_Summarize", "テスト入力")
+    parsed = json.loads(result)
+    assert parsed["status"] == "OK"
+
+
+# ---------------------------------------------------------------------------
+# ShortcutAIClient — エラーマッピング
+# ---------------------------------------------------------------------------
+
+def test_shortcut_not_found_error() -> None:
+    factory = _popen_factory_error(returncode=1, stderr="Error: Couldn't find shortcut 'News_Summarize'")
+    client = ShortcutAIClient(popen_factory=factory, retry_delay_seconds=0.0, max_json_retries=0)
+    with pytest.raises(ShortcutNotFoundError):
+        client.summarize("dummy")
+
+
+def test_rate_limit_error() -> None:
+    factory = _popen_factory_error(returncode=1, stderr="Error: Apple Intelligence rate limit reached")
+    client = ShortcutAIClient(popen_factory=factory, retry_delay_seconds=0.0, max_json_retries=0)
+    with pytest.raises(AIRateLimitError):
+        client.summarize("dummy")
+
+
+def test_timeout_error() -> None:
+    def timeout_factory(cmd, **kwargs):
+        mock_proc = MagicMock()
+        call_count = {"n": 0}
+
+        def communicate_side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # 1回目: タイムアウト（本番の communicate(timeout=...) 呼び出し）
+                raise subprocess.TimeoutExpired(cmd=cmd, timeout=1.0)
+            # 2回目: kill 後のクリーンアップ communicate() は空で返す
+            return "", ""
+
+        mock_proc.communicate = communicate_side_effect
+        mock_proc.kill = MagicMock()
+        return mock_proc
+
+    client = ShortcutAIClient(
+        popen_factory=timeout_factory,
+        timeout_seconds=1.0,
+        retry_delay_seconds=0.0,
+        max_json_retries=0,
+    )
+    with pytest.raises(AITimeoutError):
+        client.summarize("dummy")
+
+
+def test_oserror_raises_ai_client_error() -> None:
+    def oserror_factory(cmd, **kwargs):
+        raise OSError("No such file")
+
+    client = ShortcutAIClient(
+        popen_factory=oserror_factory,
+        retry_delay_seconds=0.0,
+        max_json_retries=0,
+    )
+    with pytest.raises(AIClientError):
+        client.summarize("dummy")
+
+
+# ---------------------------------------------------------------------------
+# ShortcutAIClient — リトライ
+# ---------------------------------------------------------------------------
+
+def test_retries_broken_json_then_succeeds() -> None:
+    """1回目は壊れたJSON → 2回目に正常なJSONで成功すること。"""
+    call_count = {"n": 0}
+
+    def factory(cmd, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # 壊れた出力
+            payload_text = "壊れた出力"
+        else:
+            payload_text = json.dumps(_GOOD_SUMMARY_PAYLOAD, ensure_ascii=False)
+
+        out_idx = cmd.index("--output-path") + 1
+        out_path = Path(cmd[out_idx])
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+
+        def communicate(timeout=None):
+            out_path.write_text(payload_text, encoding="utf-8")
+            return "", ""
+
+        mock_proc.communicate = communicate
+        mock_proc.kill = MagicMock()
+        return mock_proc
+
+    client = ShortcutAIClient(
+        popen_factory=factory,
+        retry_delay_seconds=0.0,
+        max_json_retries=2,
+        poll_interval=0.05,
+        stable_for=0.1,
+        max_wait=2.0,
+    )
+    res = client.summarize("dummy prompt")
+    assert call_count["n"] == 2
+    assert res.status == "OK"
+
+
+# ---------------------------------------------------------------------------
+# _read_stable_output
+# ---------------------------------------------------------------------------
+
+def test_read_stable_output_returns_empty_on_missing_file(tmp_path: Path) -> None:
+    client = ShortcutAIClient(poll_interval=0.05, stable_for=0.1, max_wait=0.3)
+    result = client._read_stable_output(tmp_path / "nonexistent.txt", max_wait=0.3)
+    assert result == ""
+
+
+def test_read_stable_output_reads_stable_file(tmp_path: Path) -> None:
+    out = tmp_path / "out.txt"
+    out.write_text("hello world", encoding="utf-8")
+    client = ShortcutAIClient(poll_interval=0.05, stable_for=0.1, max_wait=2.0)
+    result = client._read_stable_output(out, poll_interval=0.05, stable_for=0.1, max_wait=2.0)
+    assert result == "hello world"
+
+
+def test_extract_json_object_repairs_raw_newlines_in_string() -> None:
+    """AIがJSON文字列内に生の改行を出力しても解析できること。"""
+    raw = '{"status":"OK","summary":"1行目\n2行目\n3行目","key_facts":[]}'
+    parsed = extract_json_object(raw)
+    assert parsed["summary"] == "1行目\n2行目\n3行目"
+
+
+def test_read_stable_output_waits_for_complete_json(tmp_path: Path) -> None:
+    """途中まで書き込まれたJSONを採用せず、完全な出力まで待つこと。"""
+    out = tmp_path / "out.txt"
+    out.write_text('{"status":"OK","summary":"途中', encoding="utf-8")
+
+    def complete_later() -> None:
+        time.sleep(0.3)
+        out.write_text(
+            json.dumps({"status": "OK", "summary": "完了"}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    threading.Thread(target=complete_later, daemon=True).start()
+    client = ShortcutAIClient(poll_interval=0.05, stable_for=0.1, max_wait=2.0)
+    result = client._read_stable_output(
+        out,
+        poll_interval=0.05,
+        stable_for=0.1,
+        max_wait=2.0,
+        require_json_object=True,
+    )
+    assert json.loads(result)["summary"] == "完了"

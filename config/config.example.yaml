@@ -1,0 +1,45 @@
+# news-telegram 設定テンプレート
+# 運用時は config/config.yaml にコピーして使用してください（認証情報は .env で管理）。
+
+polling:
+  interval_seconds: 300        # 定期実行間隔の目安（5分）
+  max_articles_per_run: 1      # AI呼び出しが1〜3分かかるため1件固定（実測を反映）
+  concurrency: 1               # 同時処理数（サイト負荷対策で1件固定推奨）
+
+http:
+  timeout_seconds: 15
+  max_retries: 3
+  retry_delays_seconds: [1, 3, 10]
+  user_agent: "NewsTelegramPersonalBot/1.0 (+https://example.local)"
+
+feeds:
+  - name: "Yahoo!ニュース ITトピックス"
+    url: "https://news.yahoo.co.jp/rss/topics/it.xml"
+    enabled: true
+  - name: "Yahoo!ニュース ITmedia配信"
+    url: "https://news.yahoo.co.jp/rss/media/zdn_n/all.xml"
+    enabled: true
+  - name: "ITmedia NEWS"
+    url: "https://rss.itmedia.co.jp/rss/2.0/news_bursts.xml"
+    enabled: true
+
+content:
+  min_chars_guideline: 400     # 本文文字数の目安（短い記事はレビュー判定併用）
+  max_summary_lines: 3         # Phase 2 実機検証に基づく目標行数（3行以内）
+  max_summary_chars: 55        # iPhone通知で省略されない上限（目標45〜55文字、重要キーワード優先）
+
+ai:
+  provider: "apple_intelligence_shortcuts"
+  summarize_shortcut: "News_Summarize"
+  review_shortcut: "News_Review"
+  timeout_seconds: 60
+  max_revision_attempts: 2     # 初回1回 + 修正最大2回 = 最大3回
+
+telegram:
+  disable_web_page_preview: true
+  max_retries: 3
+  retry_delays_seconds: [1, 3, 10]
+
+paths:
+  database: "data/news.db"
+  log_file: "logs/application.log"
