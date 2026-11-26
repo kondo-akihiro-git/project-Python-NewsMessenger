@@ -380,6 +380,22 @@ def test_extract_json_object_does_not_recover_empty_summary() -> None:
         extract_json_object(raw)
 
 
+def test_ensure_str_coerces_string_list() -> None:
+    """AIが文字列ではなく文字列配列を返しても、連結して受け入れること。"""
+    payload = {
+        "status": "OK",
+        "summary": "会社が障害を宣言しました。",
+        "key_facts": [],
+        "reason": ["記事に明記なし"],
+        "location": ["東京都", "新宿区"],
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(payload, max_chars=55)
+    assert result.reason == "記事に明記なし"
+    assert result.location == "東京都、新宿区"
+
+
 def test_length_failure_adds_shortening_instruction_on_retry() -> None:
     """文字数超過の再試行では、短くする指示のみを付け、事実追加は指示しないこと。"""
     base = {

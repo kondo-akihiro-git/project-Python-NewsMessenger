@@ -242,6 +242,10 @@ def _ensure_str(data, key):
     if key not in data:
         raise InvalidAIResponseError(f"必須フィールド '{key}' が不足しています。")
     val = data[key]
+    # Apple Intelligence が文字列ではなく文字列配列を返すことがある。
+    # 事実は増やさず、既存の文字列を連結するだけなら安全に正規化できる。
+    if isinstance(val, list):
+        val = "、".join(str(item).strip() for item in val if str(item).strip())
     if not isinstance(val, str):
         raise InvalidAIResponseError(f"フィールド '{key}' は文字列である必要があります。")
     return val.strip()
