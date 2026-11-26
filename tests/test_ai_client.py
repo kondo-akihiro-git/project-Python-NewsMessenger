@@ -464,6 +464,38 @@ def test_taigen_failure_adds_predicate_instruction_on_retry() -> None:
     assert result.summary == "会社が障害を発表しました。"
 
 
+def test_compact_retry_template_is_used_with_previous_summary() -> None:
+    """専用の短縮プロンプトが渡され、元の長いプロンプトへ追記しないこと。"""
+    long_summary = "あ" * 60
+    base = {
+        "status": "OK",
+        "summary": long_summary,
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    fixed = dict(base, summary="短くまとめました。")
+    payloads = [json.dumps(base, ensure_ascii=False), json.dumps(fixed, ensure_ascii=False)]
+    prompts: list[str] = []
+
+    def fake_run(shortcut, prompt):
+        prompts.append(prompt)
+        return payloads[len(prompts) - 1]
+
+    template = "短縮: {{PREVIOUS_SUMMARY}} / {{OVER_CHARS}}文字 / {{MAX_CHARS}}文字以内"
+    client = ShortcutAIClient(
+        summarize_shortcut="News_Summarize", max_json_retries=1, retry_delay_seconds=0.0
+    )
+    client.run_shortcut = fake_run
+    result = client.summarize("base prompt", max_chars=55, retry_template=template)
+    assert len(prompts) == 2
+    assert prompts[1] == f"短縮: {long_summary} / 60文字 / 55文字以内"
+    assert "base prompt" not in prompts[1]
+    assert result.summary == "短くまとめました。"
+
+
 def test_read_stable_output_waits_for_complete_json(tmp_path: Path) -> None:
     """途中まで書き込まれたJSONを採用せず、完全な出力まで待つこと。"""
     out = tmp_path / "out.txt"

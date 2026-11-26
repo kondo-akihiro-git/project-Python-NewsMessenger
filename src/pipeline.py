@@ -146,19 +146,21 @@ class NewsPipeline:
     def _summarize(self, article: Article) -> tuple[SummaryResult | None, str]:
         """要約を実行する. (要約, エラーメッセージ) を返す."""
         self.store.set_status(article.article_key, SUMMARIZING)
-        prompt = self._prompt(
-            "summarize",
-            {
-                "TITLE": article.title,
-                "SOURCE": article.source or "不明",
-                "ARTICLE_BODY": article.article_body,
-            },
-        )
+        prompt_variables = {
+            "TITLE": article.title,
+            "SOURCE": article.source or "不明",
+            "ARTICLE_BODY": article.article_body,
+        }
+        prompt = self._prompt("summarize", prompt_variables)
+        # 再生成は元プロンプトへ長文を追記すると無視されやすいため、
+        # 事実（記事本文）を残した短い専用プロンプトを使う。
+        retry_template = self._prompt("shorten", prompt_variables)
         try:
             summary = self.ai.summarize(
                 prompt,
                 max_lines=self.config.max_summary_lines,
                 max_chars=self.config.max_summary_chars,
+                retry_template=retry_template,
             )
         except AIClientError as exc:
             message = f"要約生成に失敗: {exc}"
