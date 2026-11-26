@@ -157,3 +157,25 @@
     - `src/ai_cooldown.py` が `data/ai_cooldown.json` に解除時刻を保存。`main.py` は残り時間がある間は要約・レビューをスキップし、既承認記事の通知は続ける。
     - 混雑を検出した runs は `ai_cooldown.start()` で残り時間に `ai.cooldown_seconds`（既定900秒）を追加。再検出では累積するため解除が早まりすぎない。
     - テスト66件PASS。
+
+## 追加修正: オンデバイス Apple Intelligence への切替（2026-11-26）
+
+1. **背景**
+   - macOS ショートカットの Cloud モデルが15時間以上 `現在、リクエストを完了できません。` を返し続けた。新規作成ショートカットでも同一エラーで、コード側の問題ではないと切り分け。
+   - Shortcuts のモデルボタンは AX で `VALUE_BEFORE=クラウド` と確認できたが、選択肢の列挙・切替が自動化できなかった。
+   - ユーザー選択により管理者権限で **Command Line Tools for Xcode 27.2** を導入。`FoundationModels` モジュールが利用可能になり、オンデバイスモデル（`AFM 3 Core`）の生成を確認。
+2. **実装**
+   - `scripts/apple_llm_bridge.py`: `arch -arm64 /usr/bin/python3` で起動し、`apple_llm.AppleLLM(tier="device")` を呼ぶ。プロンプトは標準入力、出力は標準出力。外部APIは使用しない。
+   - `--schema` 指定時は `llm.json()` によるガイド付き生成を使い、JSONの形を機械的に固定する。キー欠けは型だけ補完し、事実は追加しない。
+   - `src/ai_client.py`: `OnDeviceAIClient(ShortcutAIClient)` を追加。要約・修正には `SUMMARY_SCHEMA`、レビューには `REVIEW_SCHEMA` を渡す。検証・リトライ・フェイルクローズは既存ロジックを再利用。
+   - `src/pipeline.py`: 既定の AI クライアントを `OnDeviceAIClient` に変更。`main.py --check-only` もショートカット一覧ではなく `probe()["device"]["available"]` を確認する。
+3. **品質ガードの追加**
+   - オンデバイスモデルは「6要素あり」と誤レビューすることが実機で確認されたため、機械ガードを追加。
+   - `src/text_quality.py::trim_related_articles()`: 記事末尾の関連記事一覧をプロンプトから除去（別記事の事実混入を防止）。
+   - 同 `missing_required_elements()`: 最低35文字未満、または見出しの固有語が1つも要約に無い場合はフェイルクローズ。理由／目的は記事に明記がない場合もあるため AI レビューに委ねる。
+   - `config/prompts/shorten.txt`: 短縮時に35文字未満へ落とさない旨を明記。
+4. **実機検証**
+   - `pytest -q tests/`: **76件PASS**。
+   - `main.py --limit 1` で実RSS記事をレビュー承認 → Telegram送信成功（`NOTIFIED`）。要約は51文字・述語終わり・URLなし。
+   - 弱い要約（19文字）は機械ガードで通知前に拒否されることを確認。
+   - launchd は再試験中のみ無効化し、終了後に再有効化済み。

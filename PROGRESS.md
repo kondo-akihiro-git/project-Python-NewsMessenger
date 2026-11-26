@@ -1,14 +1,14 @@
 # PROGRESS.md
 
-最終更新: 2026-11-26 (JST) — 体言止め全面禁止・設計ドキュメント整備・Git公開反映済み
+最終更新: 2026-11-26 (JST) — オンデバイス Apple Intelligence 切替・品質ガード強化・本番再試験成功
 
 ## 1. 全体の進捗状況
 - **完了した Phase**: Phase 1〜8（すべて実装・検証済み）
-- **テスト状況**: `pytest -q tests/` → **53件すべてPASS**
-- **実統合検証**: 実RSS 108件取得 → 実記事1件を要約・レビュー承認 → 実Telegram送信成功（message_id=21、新形式は message_id=22）
+- **テスト状況**: `pytest -q tests/` → **76件すべてPASS**
+- **実統合検証**: 実RSS 108件取得 → 実記事1件を要約・レビュー承認 → 実Telegram送信成功（旧形式 message_id=21、新形式 message_id=22、オンデバイス版で再確認済み）
 - **launchd**: インストール・有効化済み（`gui/501/com.aki.news-telegram`、5分間隔）
 - **Git**: 公開リポジトリ `project-Python-NewsMessenger` にコミット・プッシュ済み（認証情報・DB・ログは除外）
-- **未完了**: なし（任意の追加チューニングを除く）
+- **未完了**: なし（任意の追加チューニングを除く）。iPhone側の通知表示はユーザー確認待ち。
 - **既知の運用上の問題**: Apple Intelligence の JSON 出力が不安定（要約が55文字超、レビューの閉じ引用符が `」`、要約フィールド途中で出力終了など）。いずれも検証で拒否して再生成／通知しないため、誤通知は発生しない。プロンプトと再試行設計の強化で改善中（最大5回・文字数差分指示・体言止め時の述語指示・解析失敗時は元プロンプトへ戻す・間隔5秒）。
 - **体言止めガードの見逃し修正**: 1行目だけ名詞止め（`〜を宣言`）を旧ガードが見逃していたため、述語と確認できない行はすべて不合格とする厳格な判定へ変更。既存フィクスチャも述語終わりに修正済み。
 - **Apple Intelligence 混雑時の扱い**: 実機の `現在、リクエストを完了できません。` を利用制限として検出し、即座に失敗させて通知しない（有料APIへのフォールバックはしない）。検証中用いた既送信記事は `NOTIFIED` へ状態復元済み。
@@ -75,6 +75,13 @@
 - **ドキュメント**: `docs/MASTER_DESIGN.md`（設計書原本）, `docs/DECISIONS.md`（判断記録）, `docs/SETUP_ANY_PC.md`（別Mac再開手順）を新規作成。`AGENTS.md` / `README.md` / `DESIGN.md` / `CHANGELOG.md` を更新。
 - **Git**: `git init` → 初回コミット → 公開リポジトリ `project-Python-NewsMessenger` へプッシュ（認証情報・`data/`・`logs/` は除外）。
 
+### 追加修正（2026-11-26: オンデバイス Apple Intelligence への切替・本番再試験）
+- **背景**: Shortcuts Cloud モデルが15時間以上 `現在、リクエストを完了できません。` を返し続けた。新規ショートカットでも同一でコード側ではないと切り分け、ユーザー選択で管理者権限により Command Line Tools for Xcode 27.2 を導入。
+- **切替**: `scripts/apple_llm_bridge.py` が `arch -arm64 /usr/bin/python3` で `apple_llm.AppleLLM(tier="device")` を呼び出す。ガイド付きJSON生成（スキーマ）でキー欠けを防止。有料APIフォールバックなし。
+- **品質ガード強化**: 関連記事一覧をAI入力から除去（`trim_related_articles()`）。最低35文字・見出しの固有語1つ以上を機械確認し、欠ければフェイルクローズ（`missing_required_elements()`）。レビューは6要素を個別判定する厳格基準へ変更。
+- **本番再試験**: 再試験中は launchd を無効化し、強い要約（19文字）が拒否されること、妥当な要約（51文字・述語終わり）が承認→Telegram送信されることを確認。完了後に launchd を再有効化。
+- **テスト**: 76件PASS。
+
 ## 3. 未完了の作業
 - なし。任意: Apple Intelligence の要約品質チューニング継続、実ニュース10件以上の総合テスト。
 
@@ -92,13 +99,12 @@
 5. **設定ファイル**: `config/config.yaml` は未作成で `config.example.yaml` にフォールバック中。
 
 ## 5. 最後に成功したテスト・確認コマンド
-- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `66 passed in 6.38s`
-- `launchctl print gui/501/com.aki.news-telegram` → `state = not running`, `run interval = 300 seconds`
-- 新要約の実検証 → 45文字・6要素を含む要約を生成、短縮通知を送信（`message_id=22`）
-- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 main.py --check-only` → `OK: 設定・ショートカット・DB初期化を確認しました。`
-- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 main.py --limit 1 --no-notify` → `RSS新着: 108件 / 処理: 1件 / 承認: 1件`
-- 実Telegram通知 → `('url:https://news.yahoo.co.jp/pickup/6603903?source=rss', 'NOTIFIED', 21)`
-- 状態集計: `{'DISCOVERED': 106, 'FETCH_FAILED': 1, 'NOTIFIED': 1}`
+- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 -m pytest -q tests/` → `76 passed in 6.48s`
+- `arch -arm64 /usr/bin/python3` で `apple_llm.probe()` → `device.available = true`
+- `/Users/aki/.pyenv/versions/3.10.12/bin/python3 main.py --limit 1` → `RSS新着: 0件 / 処理: 1件 / 承認: 1件 / 通知送信: 1件`
+- 実Telegram通知（オンデバイスAI版）: 要約 `ティボー・ソティオ氏は、dotsの提供を開始しました。個人向けプランでは月額3000円が適用されます。`（51文字・述語終わり・URLなし）→ 状態 `NOTIFIED`
+- 弱い要約（19文字）→ `INSUFFICIENT_CONTENT`（最低文字数・固有語なしでフェイルクローズ）
+- `launchctl print-disabled gui/501` → `"com.aki.news-telegram" => enabled`（再試験後にもどす）
 
 ## 6. 環境情報
 - プロジェクトパス: `/Users/aki/.gemini/antigravity/scratch/news-telegram`

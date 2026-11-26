@@ -55,7 +55,7 @@ def approved_article(tmp_path: Path, status: str = APPROVED, notified_at: str = 
     store.discover(
         (
             FeedItem(
-                title="テスト記事",
+                title="サンプル会社が新サービスを発表　個人情報の漏えいを防止",
                 link="https://example.com/news/1",
                 guid="guid-notify-1",
                 source="テスト配信",
@@ -64,7 +64,11 @@ def approved_article(tmp_path: Path, status: str = APPROVED, notified_at: str = 
     )
     article = store.get("guid:guid-notify-1")
     assert article is not None
-    article.summary = "サンプル会社が発表しました\n個人情報が漏れました\n警察に相談しました"
+    article.summary = (
+        "サンプル会社が新サービスを発表しました\n"
+        "個人情報の漏えいを防ぐためです\n"
+        "警察に相談しました"
+    )
     store.update(article)
     store.set_status(
         "guid:guid-notify-1", status, review_status="PASS", notified_at=notified_at
@@ -78,7 +82,9 @@ def test_build_notification_text_separates_link(tmp_path: Path) -> None:
     assert article is not None
     text = build_notification_text(article)
     assert text == (
-        "サンプル会社が発表しました\n個人情報が漏れました\n警察に相談しました\n\n"
+        "サンプル会社が新サービスを発表しました\n"
+        "個人情報の漏えいを防ぐためです\n"
+        "警察に相談しました\n\n"
         "元記事を読む"
     )
     assert "https://" not in text

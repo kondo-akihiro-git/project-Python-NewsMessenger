@@ -92,6 +92,21 @@
   - `src/text_quality.py`: 既知の名詞語尾リスト方式をやめ、文末句読点を除いたうえで述語語尾と確認できない行はすべて体言止めとして扱う（フェイルクローズ）。
   - 既存テストの要約フィクスチャを各行述語終わりへ修正し、見逃した「〜を宣言」を不合格に含めるよう更新（全59件PASS）。
 
+### オンデバイス Apple Intelligence への切替と品質ガード強化（2026-11-26）
+- **背景**: Shortcuts Cloud モデルが15時間以上 `現在、リクエストを完了できません。` を返し続けたため、ユーザー判断で管理者権限により Command Line Tools for Xcode 27.2 を導入。オンデバイスの Foundation Models を `apple-llm` 経由で直接呼び出す方式へ変更（有料APIフォールバックなし）。
+- **Added**:
+  - `scripts/apple_llm_bridge.py`: `arch -arm64 /usr/bin/python3` で起動するオンデバイス呼び出しブリッジ。ガイド付きJSON生成（`llm.json()` + スキーマ）に対応。
+  - `src/ai_client.py::OnDeviceAIClient`: `SUMMARY_SCHEMA` / `REVIEW_SCHEMA` でJSONの形を固定。キー欠けは型だけ補完し、事実は追加しない。
+  - `tests/test_on_device_client.py`, `tests/test_text_quality_extra.py`: ブリッジ・ガードのテストを追加。
+  - `src/text_quality.py::missing_required_elements()`: 最低35文字未満、または見出しの固有語が1つも無い要約をフェイルクローズ。
+  - `src/text_quality.py::trim_related_articles()`: 記事末尾の関連記事一覧をAI入力から除去し、別記事の事実混入を防止。
+- **Changed**:
+  - `src/pipeline.py` / `main.py`: 既定AIを `OnDeviceAIClient` に変更。`--check-only` はショートカット一覧ではなくオンデバイスモデルの probe を確認。
+  - `config/prompts/review.txt`: 6要素（主体・出来事名・対象・理由・対応・目的）すべてを個別判定する厳格基準へ書き換え。
+  - `config/prompts/shorten.txt`: 短縮時に35文字未満へ落とさない旨を明記。
+  - `src/notifier.py`: 送信前にも必須要素ガードを適用。
+- **検証**: `pytest -q tests/` → **76件PASS**。実RSS 108件取得 → 実記事をAIレビュー承認 → Telegram送信成功（要約51文字・述語終わり・URLなし）。弱い要約（19文字）はガードで拒否されることを確認。launchd は再試験中のみ無効化し、完了後に再有効化済み。
+
 ### Changed
 - Phase 2 実機通知テストの結果を反映し、要約目標を「3行以内・合計45〜55文字目安」、要約本文へのリンク混入禁止（末尾に分離配置）へ仕様確定。
 - AI呼び出しが1〜3分かかる実測を反映し、`max_articles_per_run` を 5→1 に変更。

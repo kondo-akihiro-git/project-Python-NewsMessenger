@@ -17,7 +17,7 @@ from src.models import (
     now_iso,
 )
 from src.telegram_client import TelegramClient
-from src.text_quality import has_taigen_dome
+from src.text_quality import has_taigen_dome, missing_required_elements
 
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 _MAX_NOTIFY_RETRIES = 3
@@ -65,6 +65,11 @@ def build_notification_text(article: Article, max_chars: int = 55) -> str:
         )
     if has_taigen_dome(normalized):
         raise ValueError("要約に体言止めが含まれるため通知しません。")
+    missing = missing_required_elements(normalized, article.title or "")
+    if missing:
+        raise ValueError(
+            "要約に必須要素が不足しているため通知しません: " + "、".join(missing)
+        )
     if not (article.url or "").strip():
         raise ValueError("元記事URLが空のため通知しません。")
     return f"{normalized}\n\n{_LINK_LABEL}"

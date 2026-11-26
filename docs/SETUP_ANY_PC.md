@@ -45,30 +45,31 @@ chmod 600 .env
 
 `config/config.yaml` は任意（未作成なら `config/config.example.yaml` にフォールバック）。認証情報を YAML に書かないこと。
 
-## 4. Apple Intelligence ショートカット
+## 4. Apple Intelligence（オンデバイス呼び出し）
 
-`shortcuts/` に署名済み `.shortcut` を保管している。ショートカットアプリへ追加し、以下を確認する。
+2026-11-26 以降、既定の AI 呼び出しは **オンデバイス Apple Intelligence** です。Cloud モデルが長時間応答しないため、Shortcuts 経由の Cloud 呼び出しは既定では使用しません。有料APIへのフォールバックは禁止です。
 
-```bash
-shortcuts list        # News_Summarize / News_Review が表示されること
-```
+必要なもの:
 
-ショートカットは「入力テキストをそのまま Apple Intelligence『モデルを使用』へ渡し、出力を返す」汎用構成です。
-**プロンプト本文は `config/prompts/` が唯一の管理元**なので、プロンプトを変更してもショートカットの再生成は不要です。
-
-再生成が必要な場合:
+- Apple Silicon Mac（Foundation Models 対応）＋ macOS 言語設定が日本語
+- **Command Line Tools for Xcode 27.2 以降**（`swiftc --version` で確認）
+- `apple-llm` を **arm64 の `/usr/bin/python3`** から import できること
 
 ```bash
-/Users/aki/.pyenv/versions/3.10.12/bin/python3 scripts/build_shortcuts.py
+xcode-select --install   # またはソフトウェアアップデートで CLT 27.2 を導入
+/usr/bin/arch -arm64 /usr/bin/python3 -c "import apple_llm; print('apple_llm OK')"
 ```
+
+呼び出しは `scripts/apple_llm_bridge.py` が `arch -arm64` で起動します。`--schema` 指定時は `llm.json()` のガイド付き生成でJSONの形を固定します。
+
+旧ショートカット（`shortcuts/News_Summarize.shortcut` / `News_Review.shortcut`）は登録済みのままですが、既定では使用しません。**プロンプト本文は `config/prompts/` が唯一の管理元**です。
 
 ## 5. 動作確認
 
 ```bash
 PY=/Users/aki/.pyenv/versions/3.10.12/bin/python3   # 環境に合わせて変更
-$PY -m pytest -q tests/          # 全テスト（2026-11-26時点で66件）
-$PY main.py --check-only         # 設定・ショートカット・DB初期化の確認
-$PY scripts/test_ai_shortcuts.py --repeat 1   # Apple Intelligence 実機検証（数分）
+$PY -m pytest -q tests/          # 全テスト（2026-11-26時点で76件）
+$PY main.py --check-only         # 設定・オンデバイスAI・DB初期化の確認
 $PY main.py --limit 1 --no-notify  # RSS→要約→レビューまで（通知なし）
 ```
 

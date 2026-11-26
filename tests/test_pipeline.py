@@ -35,7 +35,20 @@ def make_config(tmp_path: Path, **overrides) -> Config:
     )
 
 
-def make_summary(status: str = "OK", text: str = "要約です。") -> SummaryResult:
+FIRST_SUMMARY = (
+    "サンプル会社が発表しました\n"
+    "個人情報の漏えいを防ぐためです\n"
+    "警察に相談しました"
+)
+
+GOOD_SUMMARY = (
+    "サンプル会社が新サービスを発表しました\n"
+    "個人情報の漏えいを防ぐためです\n"
+    "警察に相談しました"
+)
+
+
+def make_summary(status: str = "OK", text: str = GOOD_SUMMARY) -> SummaryResult:
     return SummaryResult(
         status=status,
         summary=text,
@@ -122,7 +135,7 @@ class FakeRSS:
 
 def one_item() -> FeedItem:
     return FeedItem(
-        title="テスト記事",
+        title="サンプル会社が新サービスを発表　個人情報の漏えいを防止",
         link="https://example.com/news/1",
         guid="guid-pipeline-1",
         source="テスト配信",
@@ -144,7 +157,7 @@ def build_pipeline(tmp_path: Path, ai: FakeAI, **overrides) -> NewsPipeline:
 
 def test_pass_approves_and_saves_summary(tmp_path: Path) -> None:
     ai = FakeAI(
-        summaries=[make_summary(text="わかりやすい要約。")],
+        summaries=[make_summary(text=GOOD_SUMMARY)],
         reviews=[make_review()],
     )
     pipeline = build_pipeline(tmp_path, ai)
@@ -153,20 +166,20 @@ def test_pass_approves_and_saves_summary(tmp_path: Path) -> None:
 
     result = pipeline.process_one(article)
     assert result.approved is True
-    assert result.summary == "わかりやすい要約。"
+    assert result.summary == GOOD_SUMMARY
     assert ai.calls == ["summarize", "review"]
     saved = pipeline.store.get("guid:guid-pipeline-1")
     assert saved is not None
     assert saved.status == APPROVED
     assert saved.review_status == "PASS"
-    assert saved.summary == "わかりやすい要約。"
+    assert saved.summary == GOOD_SUMMARY
 
 
 def test_fail_then_revise_then_pass(tmp_path: Path) -> None:
     ai = FakeAI(
         summaries=[
-            make_summary(text="最初の要約。"),
-            make_summary(text="修正後の要約。"),
+            make_summary(text=FIRST_SUMMARY),
+            make_summary(text=GOOD_SUMMARY),
         ],
         reviews=[
             make_review("FAIL", "根拠のない表現があります", issues=["推測"]),
@@ -179,16 +192,16 @@ def test_fail_then_revise_then_pass(tmp_path: Path) -> None:
 
     result = pipeline.process_one(article)
     assert result.approved is True
-    assert result.summary == "修正後の要約。"
+    assert result.summary == GOOD_SUMMARY
     assert result.review_attempts == 2
     assert ai.calls == ["summarize", "review", "revise", "review"]
-    assert "最初の要約。" in ai.prompts[2]
+    assert FIRST_SUMMARY in ai.prompts[2]
     assert "推測" in ai.prompts[2]
 
 
 def test_all_reviews_fail_is_rejected(tmp_path: Path) -> None:
     ai = FakeAI(
-        summaries=[make_summary(text="要約1。"), make_summary(text="要約2。")],
+        summaries=[make_summary(text=GOOD_SUMMARY), make_summary(text=GOOD_SUMMARY)],
         reviews=[make_review("FAIL", "事実が違う"), make_review("FAIL", " still 不自然")],
     )
     pipeline = build_pipeline(tmp_path, ai)
@@ -250,7 +263,7 @@ def test_ai_insufficient_status_stops(tmp_path: Path) -> None:
 
 def test_run_once_discovers_and_processes(tmp_path: Path) -> None:
     ai = FakeAI(
-        summaries=[make_summary(text="実行要約。")],
+        summaries=[make_summary(text=GOOD_SUMMARY)],
         reviews=[make_review()],
     )
     config = make_config(tmp_path)

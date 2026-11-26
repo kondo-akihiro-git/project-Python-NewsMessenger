@@ -10,6 +10,7 @@ from typing import Any, Sequence
 from src.ai_client import (
     AIClientError,
     ReviewResult,
+    OnDeviceAIClient,
     ShortcutAIClient,
     SummaryResult,
     render_prompt,
@@ -17,6 +18,7 @@ from src.ai_client import (
 from src.config import Config
 from src.content_extractor import ContentExtractor
 from src.database import ArticleStore
+from src.text_quality import missing_required_elements, trim_related_articles
 from src.models import (
     APPROVED,
     DISCOVERED,
@@ -92,9 +94,9 @@ class NewsPipeline:
             user_agent=config.user_agent,
             min_chars_guideline=config.content_min_chars_guideline,
         )
-        self.ai = ai_client or ShortcutAIClient(
-            summarize_shortcut=config.summarize_shortcut,
-            review_shortcut=config.review_shortcut,
+        # 既定はオンデバイスの Apple Intelligence（Cloud は利用制限で失敗しやすいため）。
+        # ショートカット経由が必要な場合は ai_client を明示的に渡す。
+        self.ai = ai_client or OnDeviceAIClient(
             timeout_seconds=config.ai_timeout_seconds,
         )
         self.prompts_dir = (
@@ -104,8 +106,13 @@ class NewsPipeline:
         )
 
     def _prompt(self, name: str, variables: dict[str, str]) -> str:
+        # 関連記事一覧は別記事の事実であり、要約・レビューの根拠にしてはならない。
+        # プロンプトへ渡す直前に本文だけを残す（DB の保存内容は変更しない）。
+        cleaned = dict(variables)
+        if "ARTICLE_BODY" in cleaned:
+            cleaned["ARTICLE_BODY"] = trim_related_articles(cleaned["ARTICLE_BODY"])
         path = self.prompts_dir / f"{name}.txt"
-        return render_prompt(path, variables)
+        return render_prompt(path, cleaned)
 
     def discover_new(self) -> tuple[int, tuple[str, ...]]:
         """RSSを取得して新着記事をDBに登録する."""
@@ -175,6 +182,13 @@ class NewsPipeline:
                 article.article_key, INSUFFICIENT_CONTENT, message=message
             )
             return None, message
+        missing = missing_required_elements(summary.summary, article.title)
+        if missing:
+            message = "要約に必須要素が不足しているため通知しません: " + "、".join(missing)
+            self.store.set_status(
+                article.article_key, INSUFFICIENT_CONTENT, message=message
+            )
+            return None, message
         return summary, ""
 
     def _review(self, article: Article, summary: SummaryResult) -> tuple[ReviewResult | None, str]:
@@ -225,6 +239,12 @@ class NewsPipeline:
             return None, f"修正要約に失敗: {exc}"
         if revised.status != "OK" or not revised.summary:
             return None, "修正後も正確な要約が作れないため通知しません。"
+        missing = missing_required_elements(revised.summary, article.title)
+        if missing:
+            return (
+                None,
+                "修正後も必須要素が不足しているため通知しません: " + "、".join(missing),
+            )
         return revised, ""
 
     def process_one(self, article: Article) -> PipelineResult:

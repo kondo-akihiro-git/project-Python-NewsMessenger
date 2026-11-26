@@ -32,6 +32,50 @@ _RATE_LIMIT_KEYWORDS = (
 )
 
 
+# オンデバイスモデルは自由形式 JSON を崩しやすいため、ガイド付き生成で形を固定する。
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["OK", "INSUFFICIENT"]},
+        "summary": {"type": "string"},
+        "key_facts": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+        "location": {"type": "string"},
+        "numbers": {"type": "array", "items": {"type": "string"}},
+        "uncertainties": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "status",
+        "summary",
+        "key_facts",
+        "reason",
+        "location",
+        "numbers",
+        "uncertainties",
+    ],
+}
+
+REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "status": {"type": "string", "enum": ["PASS", "FAIL"]},
+        "issues": {"type": "array", "items": {"type": "string"}},
+        "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+        "missing_facts": {"type": "array", "items": {"type": "string"}},
+        "corrections": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+    },
+    "required": [
+        "status",
+        "issues",
+        "unsupported_claims",
+        "missing_facts",
+        "corrections",
+        "reason",
+    ],
+}
+
+
 class AIClientError(Exception):
     """AI処理における基底エラー."""
 
@@ -579,10 +623,12 @@ class ShortcutAIClient:
             if not retry_template or not previous_summary:
                 return None
             over = len(previous_summary.replace("\n", ""))
+            need = max(1, over - max_chars)
             return (
                 retry_template.replace("{{PREVIOUS_SUMMARY}}", previous_summary)
                 .replace("{{OVER_CHARS}}", str(over))
                 .replace("{{MAX_CHARS}}", str(max_chars))
+                .replace("{{NEED_CHARS}}", str(need))
             )
 
         for attempt in range(1, attempts + 1):
@@ -710,3 +756,76 @@ class ShortcutAIClient:
             ),
             max_chars=max_chars,
         )
+
+
+class OnDeviceAIClient(ShortcutAIClient):
+    """apple_llm ブリッジ経由でオンデバイスの Apple Intelligence を呼び出す.
+
+    macOS ショートカットの Cloud モデルは利用制限で失敗することがあるため、
+    Apple Silicon 上のオンデバイスモデルを直接使う。外部の有料 API は使わない。
+    検証・リトライ・フェイルクローズのロジックは ShortcutAIClient を再利用する。
+    """
+
+    def __init__(
+        self,
+        *,
+        bridge_python: str = "/usr/bin/python3",
+        bridge_script: Optional[Path] = None,
+        timeout_seconds: float = 300.0,
+        max_json_retries: int = 6,
+        retry_delay_seconds: float = 1.0,
+        logger: Optional[logging.Logger] = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        runner: Optional[Callable] = None,
+    ) -> None:
+        super().__init__(
+            timeout_seconds=timeout_seconds,
+            max_json_retries=max_json_retries,
+            retry_delay_seconds=retry_delay_seconds,
+            logger=logger,
+            sleep_fn=sleep_fn,
+        )
+        self._bridge_python = bridge_python
+        self._bridge_script = (
+            Path(bridge_script)
+            if bridge_script is not None
+            else Path(__file__).resolve().parents[1] / "scripts" / "apple_llm_bridge.py"
+        )
+        self._runner = runner or subprocess.run
+
+    def run_shortcut(self, shortcut_name: str, prompt_text: str) -> str:
+        """ショートカット名で出力形式を選び、オンデバイスブリッジへプロンプトを渡す。"""
+        # pyenv の Python は x86_64 (Rosetta) の場合があるため、必ず arm64 で起動する。
+        cmd = ["/usr/bin/arch", "-arm64", self._bridge_python, str(self._bridge_script)]
+        schema = REVIEW_SCHEMA if shortcut_name == self._review_shortcut else SUMMARY_SCHEMA
+        cmd.extend(
+            ["--schema", json.dumps(schema, ensure_ascii=False)]
+        )
+        try:
+            proc = self._runner(
+                cmd,
+                input=prompt_text,
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AITimeoutError(
+                f"オンデバイスAIが {self._timeout:.0f} 秒でタイムアウトしました。"
+            ) from exc
+        except OSError as exc:
+            raise AIClientError(f"オンデバイスAIブリッジを実行できません: {exc}") from exc
+
+        err_msg = (proc.stderr or proc.stdout or "").strip()
+        if proc.returncode != 0:
+            lower = err_msg.lower()
+            if any(kw in lower or kw in err_msg for kw in _RATE_LIMIT_KEYWORDS):
+                raise AIRateLimitError(
+                    f"Apple Intelligence の利用制限に到達した可能性があります: {err_msg}"
+                )
+            raise AIClientError(f"オンデバイスAI実行失敗 (code={proc.returncode}): {err_msg}")
+
+        output = (proc.stdout or "").strip()
+        if not output:
+            raise InvalidAIResponseError("オンデバイスAIから出力を取得できませんでした。")
+        return output

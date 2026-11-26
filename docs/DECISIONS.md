@@ -96,11 +96,27 @@
 ## 5. 運用状態（このMac）
 
 - Apple Intelligence: 有効（Siri ON / `ai.enhanced-siri canUse=True`）。設定変更は行っていない。
-- ショートカット: `News_Summarize` / `News_Review` 登録済み（`shortcuts list` で確認）。署名済み `.shortcut` を `shortcuts/` に保管。
+- **AI呼び出し（2026-11-26以降）**: 既定は **オンデバイス Foundation Models**（`apple-llm` の `tier="device"`）。Command Line Tools for Xcode 27.2 を管理者権限で導入済み。`scripts/apple_llm_bridge.py` が `arch -arm64 /usr/bin/python3` で呼び出す。Cloud は障害継続中のため既定では使用しない。
+- ショートカット: `News_Summarize` / `News_Review` は登録済みのまま（署名済み `.shortcut` を `shortcuts/` に保管）だが、既定では使用しない。
 - launchd: インストール・有効化済み（`gui/501/com.aki.news-telegram`、5分間隔）。
 - 設定: `config/config.yaml` は未作成で `config.example.yaml` にフォールバック中。認証情報は `.env`（権限600）。
 - Git: 公開リポジトリ `project-Python-NewsMessenger` に集約（認証情報・DB・ログはコミットしない）。
 - Python: `/Users/aki/.pyenv/versions/3.10.12/bin/python3`（複数バージョン併存のため絶対パス固定）。
+
+---
+
+## 5-1. 判断: Cloud 障害時のオンデバイス切替と誤承認への機械ガード（2026-11-26）
+
+- **状況**: Shortcuts Cloud モデルが15時間以上 `現在、リクエストを完了できません。` を返し続けた。新規作成ショートカットでも同じで、SHORTCUTS／コード側の不具合ではない。
+- **ユーザー判断**: 管理者権限で Command Line Tools for Xcode 27.2 を導入し、オンデバイス推論へ切替える。有料AI APIへのフォールバックは絶対に行わない。
+- **ガイド付き生成**: オンデバイスモデルは自由形式JSONを崩しやすいため、`llm.json()` と `SUMMARY_SCHEMA` / `REVIEW_SCHEMA` でキーと型を固定。キー欠けは型だけ補完し、事実は追加しない。
+- **誤レビューへの対応**: オンデバイスモデルが19文字の要約に「6要素あり」と PASS を出したため、AI判断に依存せず機械ガードを追加。
+  - `trim_related_articles()`: 関連記事一覧を本文から除去（別記事の事実混入防止）。
+  - `missing_required_elements()`: 最低35文字未満、または見出しの固有語が1つも無い場合は通知しない。
+  - 理由／目的は記事に明記がない場合もあるため、機械ガードでは判定せず AI レビューに委ねる（强行注入を避ける）。
+  - `config/prompts/shorten.txt` に「35文字未満にしない」と明記。
+- **判断の優先順位**: 通知件数より正確性を優先する。条件を満たさない記事は `INSUFFICIENT_CONTENT` として通知しない（フェイルクローズ）。
+- **結果**: 76件PASS、実RSS記事で承認→Telegram送信成功（51文字・述語終わり）、弱い要約は拒否。launchd は再試験後に再有効化済み。
 
 ---
 

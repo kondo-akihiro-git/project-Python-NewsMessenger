@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ai_client import ShortcutAIClient  # noqa: E402
 from src import ai_cooldown  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.database import ArticleStore  # noqa: E402
@@ -80,26 +80,29 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_only:
         store.initialize()
         try:
-            client = ShortcutAIClient(
-                summarize_shortcut=config.summarize_shortcut,
-                review_shortcut=config.review_shortcut,
-                logger=logger,
+            proc = subprocess.run(
+                [
+                    "/usr/bin/arch",
+                    "-arm64",
+                    "/usr/bin/python3",
+                    "-c",
+                    "from apple_llm import probe; assert probe()['device']['available']",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             )
-            registered = client.list_shortcuts()
-        except Exception as exc:  # noqa: BLE001 - 確認モードでは結果を表示して終了
-            print(f"ショートカット確認失敗: {exc}")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"オンデバイスAI確認失敗: {exc}")
             return 1
-        required = (config.summarize_shortcut, config.review_shortcut)
-        missing = [name for name in required if name not in registered]
-        print(f"登録済みショートカット: {registered}")
-        print(f"必要ショートカット: {list(required)}")
-        if missing:
-            print(f"未登録: {missing}")
+        if proc.returncode != 0:
+            print(f"オンデバイスAIが利用できません: {(proc.stderr or '').strip()[:300]}")
             return 1
         if not config.bot_token or not config.chat_id:
             print("Telegram認証情報が未設定です（.env を確認してください）。")
             return 1
-        print("OK: 設定・ショートカット・DB初期化を確認しました。")
+        print("OK: 設定・オンデバイスApple Intelligence・DB初期化を確認しました。")
         return 0
 
     # 5分間隔の launchd 実行が重ならないよう、実行全体をファイルロックで保護する。
