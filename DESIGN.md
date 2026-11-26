@@ -130,3 +130,8 @@
     - `docs/DECISIONS.md`: これまでの判断・認識（体言止め、6要素、通知仕様、有料API禁止、launchd等）を記録。
     - `docs/SETUP_ANY_PC.md`: 別Mac／AIエージェントがクローンから再開するための手順を記録。
     - `AGENTS.md` / `README.md` / `CHANGELOG.md` / `PROGRESS.md` を更新し、公開リポジトリ `project-Python-NewsMessenger` で管理。
+4. **実機検証で判明した出力待ちの不足**
+    - 新プロンプトで要約を実行すると、AIの生出力が `summary` の直後（`"summary":"...",`）で切れて JSON 解析に失敗した。要約本文自体は述語終わり（`〜掲げました。`）で体言止めは解消されていた。
+    - 原因: `shortcuts run` プロセス終了後も「モデルを使用」の出力ファイルへの書き込みが続くが、待ち上限が90秒では不足していた。
+    - 修正: `ShortcutAIClient` の既定 `timeout_seconds` を 60→240秒、`max_wait` を 90→180秒に延長。不完全JSONの場合はさらに同一ファイルを再ポーリングする二段構えに変更。`config/config.example.yaml` も `ai.timeout_seconds: 240` に更新。
+    - テスト53件は引き続きPASS。

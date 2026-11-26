@@ -61,6 +61,9 @@
   - `docs/SETUP_ANY_PC.md`（別Mac／AIエージェント向け再開手順）
   - `AGENTS.md`, `README.md`, `DESIGN.md`, `PROGRESS.md` を最新状態へ更新。
 - Git リポジトリを初期化し、公開リポジトリ `project-Python-NewsMessenger` へコミット・プッシュ。認証情報・DB・ログはコミットしない。
+- 実機検証で、新プロンプトの出力が `summary` 直後で切れる問題を確認。要約自体は述語終わりで体言止め解消。
+  - `src/ai_client.py`: 既定 `timeout_seconds` 60→240秒、`max_wait` 90→180秒に延長し、不完全JSONなら追加ポーリング。
+  - `config/config.example.yaml`: `ai.timeout_seconds: 240` に更新（実測 要約97秒／レビュー193秒）。
 
 ### Changed
 - Phase 2 実機通知テストの結果を反映し、要約目標を「3行以内・合計45〜55文字目安」、要約本文へのリンク混入禁止（末尾に分離配置）へ仕様確定。

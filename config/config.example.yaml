@@ -32,7 +32,7 @@ ai:
   provider: "apple_intelligence_shortcuts"
   summarize_shortcut: "News_Summarize"
   review_shortcut: "News_Review"
-  timeout_seconds: 60
+  timeout_seconds: 240         # 実測: 要約97秒 / レビュー193秒。プロセス終了後の出力待ちを含む
   max_revision_attempts: 2     # 初回1回 + 修正最大2回 = 最大3回
 
 telegram:

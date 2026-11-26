@@ -299,7 +299,7 @@ class ShortcutAIClient:
         summarize_shortcut: str = "News_Summarize",
         review_shortcut: str = "News_Review",
         shortcuts_bin: str = "/usr/bin/shortcuts",
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = 240.0,
         max_json_retries: int = 2,
         retry_delay_seconds: float = 1.0,
         # list_shortcuts 専用: subprocess.run 互換の呼び出し可能オブジェクト
@@ -311,7 +311,7 @@ class ShortcutAIClient:
         # ファイルポーリングパラメータ
         poll_interval: float = 0.3,
         stable_for: float = 2.0,
-        max_wait: float = 90.0,
+        max_wait: float = 180.0,
     ) -> None:
         self._summarize_shortcut = summarize_shortcut
         self._review_shortcut = review_shortcut
@@ -424,6 +424,21 @@ class ShortcutAIClient:
                 max_wait=self._max_wait,
                 require_json_object=True,
             )
+            # プロセス終了後も「モデルを使用」の出力ファイルへの書き込みが続くことがある。
+            # 不完全なJSONのまま返さず、追加で待って完全なオブジェクトを取得する。
+            if out_text and not _looks_like_complete_json_object(out_text):
+                self._logger.warning(
+                    "ショートカット '%s' の出力が不完全なため追加待機します。", shortcut_name
+                )
+                extended = self._read_stable_output(
+                    output_file,
+                    poll_interval=self._poll_interval,
+                    stable_for=self._stable_for,
+                    max_wait=self._max_wait,
+                    require_json_object=True,
+                )
+                if extended:
+                    out_text = extended
             if out_text:
                 return out_text
 
