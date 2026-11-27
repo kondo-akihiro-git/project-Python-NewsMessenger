@@ -46,8 +46,8 @@ _RATE_LIMIT_KEYWORDS = (
 _RETRY_VARIATIONS = (
     "前回と異なる文構造で書いてください。同じ失敗を繰り返さないでください。",
     "主体と出来事を1文にまとめ、必ず述語で終えてください。",
-    "記事に明記された事実だけを残し、35〜55文字に収めてください。",
-    "1行目に主要ニュースだけを置き、2行目は短い補足にしてください。",
+    "記事に明記された事実だけを残し、35〜60文字に収めてください。",
+    "主要ニュースだけを1文で書いてください（改行なし）。",
 )
 
 
@@ -390,7 +390,7 @@ def _compact_overlong_summary(text: str, max_chars: int) -> str:
 
 
 def validate_summary_payload(
-    data, *, max_lines=2, max_chars=55, raw_text="", title="", article_body=""
+    data, *, max_lines=2, max_chars=60, raw_text="", title="", article_body=""
 ):
     """要約AIのJSON出力を検査して SummaryResult を返す.
 
@@ -423,15 +423,11 @@ def validate_summary_payload(
         lines = [line.strip() for line in sentence_lines.splitlines() if line.strip()]
         if not lines:
             raise InvalidAIResponseError("要約本文に有効な行がありません。")
-        if len(lines) > max_lines:
-            raise SummaryQualityError(
-                f"要約が {max_lines} 行を超えています ({len(lines)} 行)。"
-            )
         normalized_summary = _compact_overlong_summary("\n".join(lines), max_chars)
         char_count = len(normalized_summary.replace("\n", ""))
-        # 55文字超過の大半は、主要ニュース（1行目）に重複・別記事由来の
-        # 補足行が付いたことが原因。1行目だけで全ガードを満たせるなら補足行を落とす。
-        # 補足行の削除は「2行目は補足のみ」というルールに沿い、6要素はAIレビューで確認する。
+        # 60文字超過の大半は、主要ニュースに重複・別記事由来の
+        # 補足文が付いたことが原因。1文だけで全ガードを満たせるなら補足文を落とす。
+        # 補足文の削除は「補足のみ」というルールに沿い、6要素はAIレビューで確認する。
         supplement_dropped = False
         if char_count > max_chars and len(lines) >= 2:
             first_line = lines[0].strip()
@@ -459,6 +455,10 @@ def validate_summary_payload(
                 normalized_summary = first_line
                 char_count = len(first_line)
                 supplement_dropped = True
+        if len(lines) > max_lines and not supplement_dropped:
+            raise SummaryQualityError(
+                f"要約が {max_lines} 行を超えています ({len(lines)} 行)。"
+            )
         if char_count > max_chars:
             raise SummaryQualityError(
                 f"要約が上限文字数 ({max_chars}文字) を超えています ({char_count}文字): "
@@ -817,7 +817,7 @@ class ShortcutAIClient:
         prompt_text: str,
         validator: Callable,
         *,
-        max_chars: int = 55,
+        max_chars: int = 60,
         retry_template: Optional[str] = None,
     ) -> Any:
         attempts = self._max_json_retries + 1
@@ -919,16 +919,16 @@ class ShortcutAIClient:
                                     f"前回の要約:\n{previous_summary}\n"
                                     "各行を必ず述語（〜しました／〜します／〜です）で終えてください。"
                                     "6要素と事実は残したまま、述語を付けるために必要なら他の表現を短くしてください。"
-                                    "文字数は55文字以内を守ってください。"
+                                    "文字数は60文字以内を守ってください。"
                                 )
                             else:
                                 retry_prompt += (
                                     "\n\n【再生成指示】前回の要約に体言止めがありました。"
-                                    "各行を述語で終え、6要素と55文字以内を維持してください。"
+                                    "各行を述語で終え、6要素と60文字以内を維持してください。"
                                 )
                     elif "初見用語" in message:
                         # 説明なしで略語が出た場合、説明を足すより略語を避ける方が
-                        # 55文字制限と両立しやすい。記事本文の意味だけを使わせる。
+                        # 60文字制限と両立しやすい。記事本文の意味だけを使わせる。
                         term = message.split(":", 1)[-1].strip()
                         hint = (
                             "記事本文にある意味（例: 5G SA→5G専用設備）だけを使ってください。"
@@ -938,7 +938,7 @@ class ShortcutAIClient:
                         compact = compact_retry(
                             f"前回の要約は初見用語「{term}」の説明がありません。"
                             f"「{term}」と書かず、{hint}"
-                            "主体と出来事、述語、35〜55文字は維持してください。",
+                            "主体と出来事、述語、35〜60文字は維持してください。",
                             variation=variation,
                         )
                         if compact:
@@ -965,11 +965,11 @@ class ShortcutAIClient:
                     ):
                         compact = compact_retry(
                             "前回の要約は品質ガードに抵触しました。"
-                            "1行目に主要ニュース（誰が・何を）を書き、2行目はその補足だけにしてください。"
+                            "主要ニュース（誰が・何を）を1文で書いてください（改行なし）。"
                             "独立した出来事は1文にまとめ、別主体の行動を別文にしないでください。"
                             "根拠のない評価表現を削り、記事に明記された出来事と数値を入れてください。"
                             "役職だけを書かずに固有名詞を入れ、初見用語には「という」で記事の意味を説明してください。"
-                            "6要素・述語・55文字以内は維持してください。",
+                            "6要素・述語・60文字以内は維持してください。",
                             variation=variation,
                         )
                         if compact:
@@ -980,11 +980,11 @@ class ShortcutAIClient:
                                 retry_prompt += (
                                     "\n\n【再生成指示】前回の要約は品質ガードに抵触しました。"
                                     f"前回の要約:\n{previous_summary}\n"
-                                    "1行目に主要ニュース（誰が・何を）を書き、2行目はその補足だけにしてください。"
+                                    "主要ニュース（誰が・何を）を1文で書いてください（改行なし）。"
                                     "独立した出来事は1文にまとめ、別主体の行動を別文にしないでください。"
                                     "根拠のない評価表現を削り、記事に明記された出来事と数値を入れてください。"
                                     "役職だけを書かずに固有名詞を入れ、初見用語には「という」で記事の意味を説明してください。"
-                                    "6要素・述語・55文字以内は維持してください。"
+                                    "6要素・述語・60文字以内は維持してください。"
                                 )
                     else:
                         # JSON解析失敗や出力の途切れは、長い再生成指示プロンプト自体が
@@ -1009,7 +1009,7 @@ class ShortcutAIClient:
         prompt_text: str,
         *,
         max_lines: int = 2,
-        max_chars: int = 55,
+        max_chars: int = 60,
         retry_template: Optional[str] = None,
         title: str = "",
         article_body: str = "",
@@ -1043,7 +1043,7 @@ class ShortcutAIClient:
         prompt_text: str,
         *,
         max_lines: int = 2,
-        max_chars: int = 55,
+        max_chars: int = 60,
         title: str = "",
         article_body: str = "",
         retry_template: Optional[str] = None,

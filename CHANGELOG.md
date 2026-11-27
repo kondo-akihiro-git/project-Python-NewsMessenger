@@ -2,6 +2,13 @@
 
 ## [Unreleased] - 2026-11-27
 
+### Changed (要約形式: 1行・60文字・日付なし・法人格)
+
+- `config/config.example.yaml` / `src/config.py`: `max_summary_lines` を 2→1、`max_summary_chars` を 55→60 に変更。iPhone通知で3行以内に収まる単一行要約にする。
+- `src/ai_client.py` / `src/pipeline.py`: 要約・修正・再生成の指示文を1行・35〜60文字に更新。日付を含めないルールを追加。
+- `config/prompts/{summarize,revise,shorten,review}.txt`: 1行・60文字・改行なし・日付なし・法人格ルールへ全面更新。
+- `docs/AGENTS.md` / `README.md` / `docs/USER_QA.md`: 要約形式を1行・35〜60文字に更新。
+
 ### Changed (RSS更新件数との一致・信頼できるRSS追加・法人格表記・情報集約)
 
 - `config/config.example.yaml`: 公式RSSが当日更新されていた **GIGAZINE** と **PC Watch** を追加。到達不可／更新が古い候補は採用せず。

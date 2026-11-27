@@ -38,7 +38,7 @@ class NotificationResult:
         return self.status == NOTIFIED
 
 
-def build_notification_text(article: Article, max_chars: int = 55) -> str:
+def build_notification_text(article: Article, max_chars: int = 60) -> str:
     """要約本文だけの通知テキストを生成する.
 
     ユーザー指示により、リンク文言・URL・`text_link` entity は一切付けない。

@@ -56,10 +56,10 @@ def test_extract_json_object_from_code_fence_and_prose() -> None:
 # validate_summary_payload
 # ---------------------------------------------------------------------------
 
-def test_validate_summary_payload_accepts_2_lines_without_url() -> None:
+def test_validate_summary_payload_accepts_1_line_without_url() -> None:
     data = {
         "status": "OK",
-        "summary": "足立区の会社が攻撃を受けました、\nお客さんの情報約5万件が漏れ、警察に相談しました。",
+        "summary": "足立区の会社が攻撃を受け約5万件の情報が漏れ警察に相談しました。",
         "key_facts": ["約5万件流出"],
         "reason": "システムの脆弱性を突かれた",
         "location": "東京都足立区",
@@ -68,7 +68,7 @@ def test_validate_summary_payload_accepts_2_lines_without_url() -> None:
     }
     res = validate_summary_payload(data)
     assert res.status == "OK"
-    assert len(res.summary.splitlines()) == 2
+    assert "\n" not in res.summary
 
 
 def test_extract_json_object_repairs_japanese_closing_quote() -> None:
@@ -660,6 +660,7 @@ def test_overlong_supplement_line_is_dropped_when_first_line_is_valid() -> None:
         payload,
         title="飲食店の“AI商品画像”は景品表示法違反にならないの？　弁護士の見解(ITmedia NEWS)",
         article_body="飲食店のメニューに生成AIで作った画像を使うことについて弁護士の見解を紹介します。",
+        max_chars=55,
     )
     assert result.summary == first_line
     assert len(result.summary) <= 55
@@ -682,6 +683,7 @@ def test_overlong_sentence_without_newline_is_dropped() -> None:
     result = validate_summary_payload(
         payload,
         title="飲食店の“AI商品画像”は景品表示法違反にならないの？　弁護士の見解(ITmedia NEWS)",
+        max_chars=55,
     )
     assert result.summary == first_line
 
@@ -702,6 +704,7 @@ def test_cause_phrase_is_compacted_to_fit_one_character_over() -> None:
     result = validate_summary_payload(
         payload,
         title="文部科学省の入札システムに不正アクセス　最大16万件漏えいか",
+        max_chars=55,
     )
     assert "不正アクセスで" in result.summary
     assert len(result.summary) <= 55
@@ -722,6 +725,7 @@ def test_supplement_line_dropped_even_if_second_title_keyword_is_only_there() ->
     result = validate_summary_payload(
         payload,
         title="X、「ペアレンタルコントロール」を導入　メッセージ内容は見られず(ITmedia NEWS)",
+        max_chars=55,
     )
     assert result.summary == first_line
 
