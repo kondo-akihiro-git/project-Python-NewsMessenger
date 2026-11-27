@@ -97,6 +97,7 @@ _UNFAMILIAR_TERMS = (
     (r"コードレッド", "コードレッド"),
     (r"シャドーAPI", "シャドーAPI"),
     (r"ahamo", "ahamo"),
+    (r"MCP", "MCP"),
 )
 
 # 役職だけでは WHO を満たさない。固有名詞が直前にあることを要求する。
@@ -144,6 +145,23 @@ def missing_who_what(summary: str) -> bool:
 # 独立した出来事が2つ以上あるかを機械でも確認する。
 # 2行目は補足でも、別主体が別の述語で行動すると「主要イベント1つ」に反する。
 _EVENT_PREDICATE = re.compile(r"しました|ます|です|した|なった|発生しました")
+
+
+_BARE_ANNOUNCEMENT = re.compile(
+    r"(追加|登場|リリース|提供|導入|発表)され(ました|た)[。！？]?$"
+)
+
+
+def is_bare_announcement(summary: str) -> bool:
+    """出来事の発表だけで終わり、理由・対応・目的が欠けている要約なら True."""
+    text = (summary or "").strip()
+    if not text:
+        return False
+    # 60文字未満で「〜された」で終わる要約は、主要ニュースだけで
+    # 理由・対応・目的が欠けている可能性が高い。
+    if len(text.replace("\\n", "")) >= 50:
+        return False
+    return bool(_BARE_ANNOUNCEMENT.search(text))
 
 
 def has_multiple_events(summary: str) -> bool:

@@ -25,6 +25,7 @@ from src.text_quality import (
     has_taigen_dome,
     has_unnatural_predicate,
     has_vague_evaluation,
+    is_bare_announcement,
     missing_required_elements,
     missing_who_what,
     trim_related_articles,
@@ -349,6 +350,8 @@ class NewsPipeline:
             return False, "固有名詞のない役職表現があります"
         if has_multiple_events(text):
             return False, "独立した複数イベントが含まれています"
+        if is_bare_announcement(text):
+            return False, "出来事の発表だけで終わり、理由・対応・目的が不足しています"
         missing = missing_required_elements(
             text, title, min_chars=35, max_lines=self.config.max_summary_lines
         )

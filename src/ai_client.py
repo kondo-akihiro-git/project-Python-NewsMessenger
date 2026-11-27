@@ -19,6 +19,7 @@ from src.text_quality import (
     has_taigen_dome,
     has_unnatural_predicate,
     has_vague_evaluation,
+    is_bare_announcement,
     missing_required_elements,
     missing_who_what,
     unexplained_terms,
@@ -356,9 +357,12 @@ _SAFE_COMPACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?<![とを])しました"), "した"),
     (re.compile(r"について(?=(?:議論|発表|説明|言及|報告))"), "を"),
     (re.compile(r"に対して"), "に"),
-    # 「不正アクセスにより漏えい」→「不正アクセスで漏えい」のように、
-    # 手段・原因を保ったまま「で」へ短くする。
     (re.compile(r"により"), "で"),
+    # フィラー表現の短縮（意味を変えない）。
+    (re.compile(r"新機能として"), "新機能"),
+    (re.compile(r"β版として"), "β版で"),
+    (re.compile(r"業界標準のシステム"), "業界標準"),
+    (re.compile(r"業界標準に、"), "業界標準に"),
 )
 _CORPORATE_SUFFIX = re.compile(r"株式会社|\(株\)|（株）")
 
@@ -502,6 +506,11 @@ def validate_summary_payload(
         if has_multiple_events(normalized_summary):
             raise SummaryQualityError(
                 "要約に独立した複数イベントが含まれています: "
+                f"{normalized_summary!r}"
+            )
+        if is_bare_announcement(normalized_summary):
+            raise SummaryQualityError(
+                "要約が出来事の発表だけで終わり、理由・対応・目的が不足しています: "
                 f"{normalized_summary!r}"
             )
         if len(normalized_summary.replace("\\n", "")) < 35:
