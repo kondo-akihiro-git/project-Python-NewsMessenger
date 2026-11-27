@@ -2,6 +2,14 @@
 
 ## [Unreleased] - 2026-11-27
 
+### Fixed (MCP裸の発表がレビューPASSで通知されていた問題)
+
+- `src/text_quality.py`: MCPを初見用語リストへ追加。`is_bare_announcement` を追加（35〜60文字未満で「〜された」で終わる裸の発表を機械拒否）。
+- `src/ai_client.py`: `validate_summary_payload` に初見用語・裸の発表ガードを追加。min_chars 35 を末尾で最終確認。
+- `src/pipeline.py`: レビューPASS後も `_mechanical_summary_ok` で機械ガードを最終確認。抵触時はFAIL扱いで修正ループへ。
+- `config/prompts/review.txt`: 「MCPに新機能『Skills over MCP』がβ版として追加されました。」を不合格例として明記。6要素（特に理由・対応・目的）必須を強調。
+- 検証: MCP記事を再処理し `REVIEW_REJECTED`（通知なし）に。良質な要約（飲食店記事）は機械ガードを通過することを確認。フェイルクローズが機能。
+
 ### Changed (要約形式: 1行・60文字・日付なし・法人格)
 
 - `config/config.example.yaml` / `src/config.py`: `max_summary_lines` を 2→1、`max_summary_chars` を 55→60 に変更。iPhone通知で3行以内に収まる単一行要約にする。
