@@ -44,6 +44,9 @@ feeds:
   - name: "INTERNET Watch"
     url: "https://internet.watch.impress.co.jp/data/rss/1.0/iw/feed.rdf"
     enabled: true
+  - name: "ASCII.jp"
+    url: "https://ascii.jp/rss.xml"
+    enabled: true
 
 content:
   min_chars_guideline: 400     # 本文文字数の目安（短い記事はレビュー判定併用）
