@@ -34,7 +34,9 @@ ai:
   review_shortcut: "News_Review"
   timeout_seconds: 240         # 実測: 要約97秒 / レビュー193秒。プロセス終了後の出力待ちを含む
   cooldown_seconds: 900        # 混雑（現在、リクエストを完了できません）時にAI呼び出しを止める時間
-  max_revision_attempts: 2     # 初回1回 + 修正最大2回 = 最大3回
+  # 品質基準を満たすまで再生成・再レビューを繰り返す（外部障害時は即フェイルクローズ）
+  max_summary_attempts: 60     # 要約生成の最大試行回数
+  max_revision_attempts: 60    # レビュー不合格時の修正・再レビューの最大回数
 
 telegram:
   disable_web_page_preview: true

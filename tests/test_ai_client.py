@@ -19,6 +19,7 @@ from src.ai_client import (
     AITimeoutError,
     InvalidAIResponseError,
     ShortcutAIClient,
+    SummaryQualityError,
     ShortcutNotFoundError,
     extract_json_object,
     render_prompt,
@@ -604,6 +605,37 @@ def test_length_failure_adds_shortening_instruction_on_retry() -> None:
     assert result.summary == "短くまとめました。"
 
 
+def test_over_limit_summary_is_compacted_only_with_safe_predicate() -> None:
+    """超過は「発生しました」→「発生した」だけに留め、不自然な述語を作らない。"""
+    payload = {
+        "status": "OK",
+        "summary": "あ" * 49 + "発生しました。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(payload, max_chars=55)
+    assert len(result.summary) == 54
+    assert result.summary.endswith("発生した。")
+
+
+def test_unnatural_predicate_is_rejected_without_title() -> None:
+    """見出しが渡されなくても不自然な述語は品質不合格とする。"""
+    payload = {
+        "status": "OK",
+        "summary": "NTTドコモが通信障害の原因究明としました。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(SummaryQualityError, match="不自然な述語"):
+        validate_summary_payload(payload)
+
+
 def test_taigen_failure_adds_predicate_instruction_on_retry() -> None:
     """体言止めの再試行では、直前の要約を渡して述語で終えるよう指示すること。"""
     base = {
@@ -633,6 +665,23 @@ def test_taigen_failure_adds_predicate_instruction_on_retry() -> None:
     assert "会社が障害を発表し、対応を検討" in prompts[1]
     assert "述語（〜しました／〜します／〜です）で終えてください" in prompts[1]
     assert result.summary == "会社が障害を発表しました。"
+
+
+def test_external_ai_error_is_not_retried() -> None:
+    """AI障害は品質不合格と異なり、リトライせず即座に失敗させる。"""
+    calls: list[str] = []
+
+    def fake_run(shortcut, prompt):
+        calls.append(shortcut)
+        raise AIClientError("オンデバイスAI実行失敗")
+
+    client = ShortcutAIClient(
+        summarize_shortcut="News_Summarize", max_json_retries=3, retry_delay_seconds=0.0
+    )
+    client.run_shortcut = fake_run
+    with pytest.raises(AIClientError):
+        client.summarize("base prompt")
+    assert calls == ["News_Summarize"]
 
 
 def test_compact_retry_template_is_used_with_previous_summary() -> None:

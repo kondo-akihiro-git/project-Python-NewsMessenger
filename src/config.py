@@ -43,6 +43,7 @@ class Config:
     review_shortcut: str
     ai_timeout_seconds: float
     ai_cooldown_seconds: float
+    max_summary_attempts: int
     max_revision_attempts: int
     telegram_disable_web_page_preview: bool
     telegram_retry_delays_seconds: tuple[float, ...]
@@ -118,7 +119,9 @@ def load_config(
         review_shortcut=str(ai.get("review_shortcut") or "News_Review"),
         ai_timeout_seconds=float(ai.get("timeout_seconds", 60)),
         ai_cooldown_seconds=max(0.0, float(ai.get("cooldown_seconds", 900))),
-        max_revision_attempts=max(0, int(ai.get("max_revision_attempts", 2))),
+        # 品質基準を満たすまで要約・レビューを繰り返す。外部障害時のみフェイルクローズ。
+        max_summary_attempts=max(1, int(ai.get("max_summary_attempts", 60))),
+        max_revision_attempts=max(0, int(ai.get("max_revision_attempts", 60))),
         telegram_disable_web_page_preview=bool(
             telegram.get("disable_web_page_preview", True)
         ),

@@ -8,6 +8,7 @@ from pathlib import Path
 from src.ai_client import (
     AIClientError,
     ReviewResult,
+    SummaryQualityError,
     SummaryResult,
 )
 from src.config import Config, load_config
@@ -26,22 +27,22 @@ BASE_CONFIG: Config = load_config(Path(__file__).resolve().parent.parent)
 
 
 def test_limited_body_cuts_at_sentence_boundary():
-    """AIへ渡す本文は関連記事を除き450文字以内・文途中で切らない。"""
+    """AIへ渡す本文は関連記事を除き350文字以内・文途中で切らない。"""
     body = "A" * 200 + "。\n" + "B" * 800 + "。\n" + "Copyright © ITmedia, Inc."
     limited = _limited_body(body)
-    assert len(limited) <= 450
+    assert len(limited) <= 350
     assert limited.startswith("A" * 200 + "。")
     assert "Copyright" not in limited
 
 
 def make_config(tmp_path: Path, **overrides) -> Config:
-    return replace(
-        BASE_CONFIG,
-        database_path=tmp_path / "news.db",
-        max_articles_per_run=2,
-        max_revision_attempts=1,
-        **overrides,
-    )
+    values = {
+        "database_path": tmp_path / "news.db",
+        "max_articles_per_run": 2,
+        "max_revision_attempts": 1,
+    }
+    values.update(overrides)
+    return replace(BASE_CONFIG, **values)
 
 
 FIRST_SUMMARY = (
@@ -262,6 +263,49 @@ def test_all_reviews_fail_is_rejected(tmp_path: Path) -> None:
     assert saved is not None
     assert saved.status == REVIEW_REJECTED
     assert saved.review_status == "FAIL"
+
+
+def test_quality_failed_revisions_retry_until_pass(tmp_path: Path) -> None:
+    """品質ガード抵触は通知を減らさず、基準を満たすまで修正を繰り返す。"""
+    ai = FakeAI(
+        summaries=[
+            make_summary(text=GOOD_SUMMARY),
+            make_summary(text="短すぎる"),  # 機械ガードに抵触
+            SummaryQualityError("要約に説明のない初見用語があります: 5G SA"),
+            make_summary(text=GOOD_SUMMARY),
+        ],
+        reviews=[
+            make_review("FAIL", "修正が必要"),
+            make_review("PASS", "修正されました"),
+        ],
+    )
+    pipeline = build_pipeline(tmp_path, ai, max_revision_attempts=3)
+    article = pipeline.store.get("guid:guid-pipeline-1")
+    assert article is not None
+
+    result = pipeline.process_one(article)
+    assert result.approved is True
+    assert ai.calls.count("revise") == 3
+    assert result.review_attempts == 2
+    saved = pipeline.store.get("guid:guid-pipeline-1")
+    assert saved is not None
+    assert saved.summary == GOOD_SUMMARY
+
+
+def test_revise_external_error_stops_immediately(tmp_path: Path) -> None:
+    """AI障害は品質失敗とは異なり、即座にフェイルクローズする。"""
+    ai = FakeAI(
+        summaries=[make_summary(text=GOOD_SUMMARY), AIClientError("shortcuts 実行失敗")],
+        reviews=[make_review("FAIL", "修正が必要")],
+    )
+    pipeline = build_pipeline(tmp_path, ai, max_revision_attempts=3)
+    article = pipeline.store.get("guid:guid-pipeline-1")
+    assert article is not None
+
+    result = pipeline.process_one(article)
+    assert result.status == REVIEW_REJECTED
+    assert ai.calls.count("revise") == 1
+    assert "修正要約に失敗" in result.error
 
 
 def test_insufficient_body_stops_before_ai(tmp_path: Path) -> None:

@@ -17,7 +17,9 @@ from src.text_quality import (
     has_multiple_events,
     has_role_without_name,
     has_taigen_dome,
+    has_unnatural_predicate,
     has_vague_evaluation,
+    missing_required_elements,
     missing_who_what,
     unexplained_terms,
 )
@@ -36,6 +38,16 @@ _RATE_LIMIT_KEYWORDS = (
     # macOS 側で Apple Intelligence が混雑したときの実機メッセージ。
     "現在、リクエストを完了できません",
     "request could not be completed",
+)
+
+
+# 同じ失敗を繰り返さないよう、再生成ごとに文構造の指示を変える。
+# 品質基準を満たすまで再生成を続けるため、単調な再試行は同じ要約を生みがち。
+_RETRY_VARIATIONS = (
+    "前回と異なる文構造で書いてください。同じ失敗を繰り返さないでください。",
+    "主体と出来事を1文にまとめ、必ず述語で終えてください。",
+    "記事に明記された事実だけを残し、35〜55文字に収めてください。",
+    "1行目に主要ニュースだけを置き、2行目は短い補足にしてください。",
 )
 
 
@@ -113,6 +125,10 @@ class AITimeoutError(AIClientError):
 
 class InvalidAIResponseError(AIClientError):
     """AIのJSON出力が不正または検証基準を満たさないエラー."""
+
+
+class SummaryQualityError(InvalidAIResponseError):
+    """要約が品質基準を満たさないエラー（再生成の対象）."""
 
 
 @dataclass(frozen=True)
@@ -334,8 +350,38 @@ def _ensure_str(data, key):
     return val.strip()
 
 
-def validate_summary_payload(data, *, max_lines=2, max_chars=55, raw_text=""):
-    """要約AIのJSON出力を検査して SummaryResult を返す."""
+# 安全に常体化できる述語だけを対象にする。
+# 「ました」→「した」は「発生しした」「求めした」のような不自然な述語を生むため禁止。
+_SAFE_COMPACTION = re.compile(r"(?<![とを])しました")
+
+
+def _compact_overlong_summary(text: str, max_chars: int) -> str:
+    """1〜3文字の超過だけを、自然な述語の言い換えで収める Safety net。
+
+    「発生しました」→「発生した」のように、サ変動詞の「しました」を「した」へ
+    置き換える場合だけ短縮する。新しい事実は追加せず、置換後も全品質ガードで
+    再検証する。安全な置換が無い場合はそのまま返し、再生成側で解消する。
+    """
+    current = text
+    for _ in range(3):
+        if len(current.replace("\n", "")) <= max_chars:
+            return current
+        matches = list(_SAFE_COMPACTION.finditer(current))
+        if not matches:
+            break
+        match = matches[-1]
+        current = current[: match.start()] + "した" + current[match.end() :]
+    return current
+
+
+def validate_summary_payload(
+    data, *, max_lines=2, max_chars=55, raw_text="", title=""
+):
+    """要約AIのJSON出力を検査して SummaryResult を返す.
+
+    title が渡された場合は見出しの固有語も機械ガードで確認する。
+    品質基準に抵触した場合は SummaryQualityError を投げ、再生成対象とする。
+    """
     status = _ensure_str(data, "status").upper()
     if status not in ("OK", "INSUFFICIENT"):
         raise InvalidAIResponseError(f"不正な status です: {status!r}")
@@ -351,54 +397,67 @@ def validate_summary_payload(data, *, max_lines=2, max_chars=55, raw_text=""):
         if not summary:
             raise InvalidAIResponseError("status=OK ですが summary が空です。")
         if _URL_PATTERN.search(summary):
-            raise InvalidAIResponseError("要約本文に URL が含まれています。")
+            raise SummaryQualityError("要約本文に URL が含まれています。")
         if _LEADING_LABEL_PATTERN.match(summary):
-            raise InvalidAIResponseError("要約本文に不要な前置きラベルが含まれています。")
+            raise SummaryQualityError("要約本文に不要な前置きラベルが含まれています。")
         if "{" in summary or "}" in summary or "```" in summary:
-            raise InvalidAIResponseError("要約本文にJSONやコード記法が含まれています。")
+            raise SummaryQualityError("要約本文にJSONやコード記法が含まれています。")
         lines = [line.strip() for line in summary.splitlines() if line.strip()]
         if not lines:
             raise InvalidAIResponseError("要約本文に有効な行がありません。")
         if len(lines) > max_lines:
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 f"要約が {max_lines} 行を超えています ({len(lines)} 行)。"
             )
-        normalized_summary = "\n".join(lines)
+        normalized_summary = _compact_overlong_summary("\n".join(lines), max_chars)
         char_count = len(normalized_summary.replace("\n", ""))
         if char_count > max_chars:
-            raise InvalidAIResponseError(
-                f"要約が上限文字数 ({max_chars}文字) を超えています ({char_count}文字)。"
+            raise SummaryQualityError(
+                f"要約が上限文字数 ({max_chars}文字) を超えています ({char_count}文字): "
+                f"{normalized_summary!r}"
             )
         if has_taigen_dome(normalized_summary):
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 "要約に体言止め（名詞で終わる行）が含まれています: "
                 f"{normalized_summary!r}"
             )
+        if has_unnatural_predicate(normalized_summary):
+            raise SummaryQualityError(
+                "要約に不自然な述語が含まれています: " f"{normalized_summary!r}"
+            )
         if has_vague_evaluation(normalized_summary):
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 "要約に具体的な根拠のない評価表現が含まれています: "
                 f"{normalized_summary!r}"
             )
         if missing_who_what(normalized_summary):
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 "要約に WHO/WHAT（誰が・何について）が不足しています: "
                 f"{normalized_summary!r}"
             )
         terms = unexplained_terms(normalized_summary)
         if terms:
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 "要約に説明のない初見用語があります: " + "、".join(terms)
             )
         if has_role_without_name(normalized_summary):
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 "要約に固有名詞のない役職表現があります: "
                 f"{normalized_summary!r}"
             )
         if has_multiple_events(normalized_summary):
-            raise InvalidAIResponseError(
+            raise SummaryQualityError(
                 "要約に独立した複数イベントが含まれています: "
                 f"{normalized_summary!r}"
             )
+        if title:
+            missing = missing_required_elements(
+                normalized_summary, title, min_chars=35, max_lines=max_lines
+            )
+            if missing:
+                raise SummaryQualityError(
+                    "要約に必須要素が不足しています: " + "、".join(missing)
+                )
         summary = normalized_summary
 
     return SummaryResult(
@@ -708,25 +767,28 @@ class ShortcutAIClient:
         retry_prompt = prompt_text
         previous_summary = ""
 
-        def compact_retry(instruction: str = "") -> Optional[str]:
+        def compact_retry(
+            instruction: str = "", *, variation: str = ""
+        ) -> Optional[str]:
             """短い専用プロンプトへ失敗理由を渡して再生成する。
 
             オンデバイス模型はコンテキストが4096トークンまでなので、
             長い元プロンプトへ説明を追記すると ContextLengthError になる。
+            試行ごとの文構造の変化はテンプレート内の差し込み枠に載せる。
             """
             if not retry_template or not previous_summary:
                 return None
             over = len(previous_summary.replace("\n", ""))
             need = max(1, over - max_chars)
+            effective = instruction or "前回の要約の問題点を修正してください。"
+            if variation and "{{FAILURE_INSTRUCTION}}" in retry_template:
+                effective = f"{effective} {variation}".strip()
             return (
                 retry_template.replace("{{PREVIOUS_SUMMARY}}", previous_summary)
                 .replace("{{OVER_CHARS}}", str(over))
                 .replace("{{MAX_CHARS}}", str(max_chars))
                 .replace("{{NEED_CHARS}}", str(need))
-                .replace(
-                    "{{FAILURE_INSTRUCTION}}",
-                    instruction or "前回の要約の問題点を修正してください。",
-                )
+                .replace("{{FAILURE_INSTRUCTION}}", effective)
             )
 
         for attempt in range(1, attempts + 1):
@@ -736,9 +798,11 @@ class ShortcutAIClient:
                 if isinstance(parsed.get("summary"), str):
                     previous_summary = parsed["summary"]
                 return validator(parsed, raw_output)
-            except (ShortcutNotFoundError, AIRateLimitError):
+            except (ShortcutNotFoundError, AIRateLimitError, AITimeoutError):
+                # 利用制限・タイムアウトは再生成ではなくフェイルクローズ対象。
                 raise
-            except (InvalidAIResponseError, AITimeoutError, AIClientError) as exc:
+            except InvalidAIResponseError as exc:
+                # JSON破損と品質ガード抵触は、短い再生成プロンプトで解消を試みる。
                 last_exc = exc
                 self._logger.warning(
                     "AI応答検証失敗 (%s 試行 %d/%d): %s",
@@ -751,8 +815,17 @@ class ShortcutAIClient:
                     # 文字数・行数超過は同じプロンプトを再実行しても再現するため、
                     # 直前に生成された要約そのものを渡し、事実を残した言い換えを指示する。
                     message = str(exc)
+                    variation = _RETRY_VARIATIONS[
+                        (attempt - 1) % len(_RETRY_VARIATIONS)
+                    ]
                     if "上限文字数" in message or "行を超えています" in message:
-                        compact = compact_retry()
+                        over_chars = len(previous_summary.replace("\n", ""))
+                        need_chars = max(1, over_chars - max_chars)
+                        compact = compact_retry(
+                            f"前回は{over_chars}文字です。あと{need_chars}文字だけ削って"
+                            f"{max_chars}文字ちょうどにしてください。事実・助詞・述語は残してください。",
+                            variation=variation,
+                        )
                         if compact:
                             retry_prompt = compact
                         else:
@@ -775,7 +848,8 @@ class ShortcutAIClient:
                     elif "体言止め" in message:
                         # 名詞止めは行ごとの問題なので、直前の要約を渡して述語の付け方を具体的に指示する。
                         compact = compact_retry(
-                            "前回の要約に体言止めがありました。各行を述語（〜しました／〜します／〜です）で終えてください。"
+                            "前回の要約に体言止めがありました。各行を述語（〜しました／〜します／〜です）で終えてください。",
+                            variation=variation,
                         )
                         if compact:
                             retry_prompt = compact
@@ -793,6 +867,31 @@ class ShortcutAIClient:
                                 retry_prompt += (
                                     "\n\n【再生成指示】前回の要約に体言止めがありました。"
                                     "各行を述語で終え、6要素と55文字以内を維持してください。"
+                                )
+                    elif "初見用語" in message:
+                        # 説明なしで略語が出た場合、説明を足すより略語を避ける方が
+                        # 55文字制限と両立しやすい。記事本文の意味だけを使わせる。
+                        term = message.split(":", 1)[-1].strip()
+                        hint = (
+                            "記事本文にある意味（例: 5G SA→5G専用設備）だけを使ってください。"
+                            if term == "5G SA"
+                            else "記事本文にある意味だけを使ってください。"
+                        )
+                        compact = compact_retry(
+                            f"前回の要約は初見用語「{term}」の説明がありません。"
+                            f"「{term}」と書かず、{hint}"
+                            "主体と出来事、述語、35〜55文字は維持してください。",
+                            variation=variation,
+                        )
+                        if compact:
+                            retry_prompt = compact
+                        else:
+                            retry_prompt = prompt_text
+                            if previous_summary:
+                                retry_prompt += (
+                                    "\n\n【再生成指示】前回の要約に説明のない初見用語がありました。"
+                                    f"前回の要約:\n{previous_summary}\n"
+                                    f"「{term}」と書かず、{hint}"
                                 )
                     elif any(
                         keyword in message
@@ -812,7 +911,8 @@ class ShortcutAIClient:
                             "独立した出来事は1文にまとめ、別主体の行動を別文にしないでください。"
                             "根拠のない評価表現を削り、記事に明記された出来事と数値を入れてください。"
                             "役職だけを書かずに固有名詞を入れ、初見用語には「という」で記事の意味を説明してください。"
-                            "6要素・述語・55文字以内は維持してください。"
+                            "6要素・述語・55文字以内は維持してください。",
+                            variation=variation,
                         )
                         if compact:
                             retry_prompt = compact
@@ -835,6 +935,9 @@ class ShortcutAIClient:
                         previous_summary = ""
                     if self._retry_delay > 0:
                         self._sleep(self._retry_delay)
+            except AIClientError:
+                # ブリッジ実行失敗など外部障害も再試行しない。
+                raise
 
         assert last_exc is not None
         raise last_exc
@@ -850,13 +953,18 @@ class ShortcutAIClient:
         max_lines: int = 2,
         max_chars: int = 55,
         retry_template: Optional[str] = None,
+        title: str = "",
     ) -> SummaryResult:
         """News_Summarize ショートカットを実行して要約結果を返す."""
         return self._run_with_json_validation(
             self._summarize_shortcut,
             prompt_text,
             lambda data, raw: validate_summary_payload(
-                data, max_lines=max_lines, max_chars=max_chars, raw_text=raw
+                data,
+                max_lines=max_lines,
+                max_chars=max_chars,
+                raw_text=raw,
+                title=title,
             ),
             max_chars=max_chars,
             retry_template=retry_template,
@@ -876,6 +984,8 @@ class ShortcutAIClient:
         *,
         max_lines: int = 2,
         max_chars: int = 55,
+        title: str = "",
+        retry_template: Optional[str] = None,
     ) -> SummaryResult:
         """修正プロンプトを要約ショートカットへ渡し、修正済み要約を返す.
 
@@ -886,9 +996,14 @@ class ShortcutAIClient:
             self._summarize_shortcut,
             prompt_text,
             lambda data, raw: validate_summary_payload(
-                data, max_lines=max_lines, max_chars=max_chars, raw_text=raw
+                data,
+                max_lines=max_lines,
+                max_chars=max_chars,
+                raw_text=raw,
+                title=title,
             ),
             max_chars=max_chars,
+            retry_template=retry_template,
         )
 
 

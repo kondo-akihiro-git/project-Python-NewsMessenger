@@ -12,6 +12,7 @@ from src.ai_client import (
     ReviewResult,
     OnDeviceAIClient,
     ShortcutAIClient,
+    SummaryQualityError,
     SummaryResult,
     render_prompt,
 )
@@ -39,9 +40,17 @@ from src.rss_client import RSSClient
 # ガイド付きJSON生成ではスキーマ分のオーバーヘッドがあり、実測で
 # 要約プロンプト全体は約3100文字が上限（それ以上で ContextLengthError）。
 # プロンプト本体（要約2557文字）と合わせて超過しないよう、
-# AIへ渡す本文は記事のリード文と用語説明を含む先頭450文字までに制限する。
+# AIへ渡す本文は記事のリード文と用語説明を含む先頭350文字までに制限する。
 # 記事の重要な事実は冒頭に集中しており、後半の関連話題は要約に不要。
-_MAX_AI_BODY_CHARS = 450
+# プロンプト強化後もガイド付きJSONの4096トークン窓に収めるため、450→350へ短縮。
+_MAX_AI_BODY_CHARS = 350
+
+# 修正要約が同じ失敗を繰り返さないよう、試行ごとに観点を変える。
+_REVISION_VARIATIONS = (
+    "前回と異なる文構造で書いてください。",
+    "主要イベントの主体と出来事を1文にまとめてください。",
+    "初見用語の説明と述語を残したまま、35〜55文字に収めてください。",
+)
 
 
 def _limited_body(text: str) -> str:
@@ -118,6 +127,8 @@ class NewsPipeline:
         # ショートカット経由が必要な場合は ai_client を明示的に渡す。
         self.ai = ai_client or OnDeviceAIClient(
             timeout_seconds=config.ai_timeout_seconds,
+            # 基準を満たす要約が出るまで再生成を続ける（外部障害時は即座に失敗）。
+            max_json_retries=max(1, config.max_summary_attempts) - 1,
         )
         self.prompts_dir = (
             Path(prompts_dir)
@@ -188,7 +199,15 @@ class NewsPipeline:
                 max_lines=self.config.max_summary_lines,
                 max_chars=self.config.max_summary_chars,
                 retry_template=retry_template,
+                title=article.title,
             )
+        except SummaryQualityError as exc:
+            # 再生成を尽くしても基準を満たせない場合のみフェイルクローズ。
+            message = f"要約が品質基準を満たしません: {exc}"
+            self.store.set_status(
+                article.article_key, SUMMARY_FAILED, message=message, increment_retry=True
+            )
+            return None, message
         except AIClientError as exc:
             message = f"要約生成に失敗: {exc}"
             self.store.set_status(
@@ -233,6 +252,8 @@ class NewsPipeline:
         article: Article,
         review: ReviewResult,
         previous_summary: str,
+        *,
+        attempt: int = 1,
     ) -> tuple[SummaryResult | None, str]:
         """レビュー指摘を反映した修正要約を生成する."""
         prompt = self._prompt(
@@ -254,12 +275,28 @@ class NewsPipeline:
                 "SINGLE_EVENT_OK": "OK" if review.single_event_ok else "複数イベント",
             },
         )
+        if attempt > 1:
+            prompt += "\n\n" + _REVISION_VARIATIONS[
+                (attempt - 1) % len(_REVISION_VARIATIONS)
+            ]
+        retry_template = self._prompt(
+            "shorten",
+            {
+                "TITLE": article.title,
+                "SOURCE": article.source or "不明",
+                "ARTICLE_BODY": article.article_body,
+            },
+        )
         try:
             revised = self.ai.revise(
                 prompt,
                 max_lines=self.config.max_summary_lines,
                 max_chars=self.config.max_summary_chars,
+                title=article.title,
+                retry_template=retry_template,
             )
+        except SummaryQualityError as exc:
+            return None, f"修正要約が品質基準を満たしません: {exc}"
         except AIClientError as exc:
             return None, f"修正要約に失敗: {exc}"
         if revised.status != "OK" or not revised.summary:
@@ -339,20 +376,46 @@ class NewsPipeline:
                     error=message,
                 )
 
-            revised, error = self._revise(article, review, current_summary.summary)
-            revisions += 1
+            # 品質ガードに抵触した修正要約は、基準を満たすまで作り直す。
+            # AIの利用不可・タイムアウトなどの外部障害は従来どおり即フェイルクローズ。
+            revised = None
+            error = ""
+            while revisions < self.config.max_revision_attempts:
+                revisions += 1
+                revised, error = self._revise(
+                    article, review, current_summary.summary, attempt=revisions
+                )
+                if revised is not None:
+                    break
+                quality_failure = error.startswith("修正後も") or error.startswith(
+                    "修正要約が品質基準を満たしません"
+                )
+                if not quality_failure:
+                    self.store.set_status(
+                        key, REVIEW_REJECTED, review_status="FAIL", message=error
+                    )
+                    return PipelineResult(
+                        article_key=key,
+                        status=REVIEW_REJECTED,
+                        summary=current_summary.summary,
+                        review_status="FAIL",
+                        reason=error,
+                        review_attempts=review_attempts,
+                        error=error,
+                    )
             if revised is None:
+                message = f"レビュー不合格: {error or review.reason}"
                 self.store.set_status(
-                    key, REVIEW_REJECTED, review_status="FAIL", message=error
+                    key, REVIEW_REJECTED, review_status="FAIL", message=message
                 )
                 return PipelineResult(
                     article_key=key,
                     status=REVIEW_REJECTED,
                     summary=current_summary.summary,
                     review_status="FAIL",
-                    reason=error,
+                    reason=message,
                     review_attempts=review_attempts,
-                    error=error,
+                    error=message,
                 )
             current_summary = revised
 
