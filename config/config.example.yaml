@@ -32,6 +32,12 @@ feeds:
   - name: "ASCII.jp"
     url: "https://ascii.jp/rss.xml"
     enabled: true
+  - name: "時事ドットコム"
+    url: "https://www.jiji.com/rss/ranking.rdf"
+    enabled: true
+  - name: "BBC Japanese"
+    url: "https://feeds.bbci.co.uk/japanese/rss.xml"
+    enabled: true
 
 content:
   min_chars_guideline: 400     # 本文文字数の目安（短い記事はレビュー判定併用）
