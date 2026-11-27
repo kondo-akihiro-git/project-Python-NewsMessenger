@@ -45,15 +45,9 @@ def make_config(tmp_path: Path, **overrides) -> Config:
     return replace(BASE_CONFIG, **values)
 
 
-FIRST_SUMMARY = (
-    "サンプル会社が発表しました\n"
-    "個人情報の漏えいを防ぐため、警察に相談しました"
-)
+FIRST_SUMMARY = "サンプル会社が個人情報漏えいを防ぐため警察に相談し再発防止を求めました。"
 
-GOOD_SUMMARY = (
-    "サンプル会社が新サービスを発表しました\n"
-    "個人情報の漏えいを防ぐため、警察に相談しました"
-)
+GOOD_SUMMARY = "サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。"
 
 
 def make_summary(status: str = "OK", text: str = GOOD_SUMMARY) -> SummaryResult:

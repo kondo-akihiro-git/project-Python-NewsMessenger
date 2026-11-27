@@ -504,6 +504,10 @@ def validate_summary_payload(
                 "要約に独立した複数イベントが含まれています: "
                 f"{normalized_summary!r}"
             )
+        if len(normalized_summary.replace("\\n", "")) < 35:
+            raise SummaryQualityError(
+                f"要約が短すぎます（35文字未満）: {normalized_summary!r}"
+            )
         if title:
             missing = missing_required_elements(
                 normalized_summary, title, min_chars=35, max_lines=max_lines

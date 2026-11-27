@@ -19,7 +19,17 @@ from src.ai_client import (
 from src.config import Config
 from src.content_extractor import ContentExtractor
 from src.database import ArticleStore
-from src.text_quality import missing_required_elements, trim_related_articles
+from src.text_quality import (
+    has_multiple_events,
+    has_role_without_name,
+    has_taigen_dome,
+    has_unnatural_predicate,
+    has_vague_evaluation,
+    missing_required_elements,
+    missing_who_what,
+    trim_related_articles,
+    unexplained_terms,
+)
 from src.models import (
     APPROVED,
     DISCOVERED,
@@ -311,6 +321,48 @@ class NewsPipeline:
             )
         return revised, ""
 
+    def _mechanical_summary_ok(
+        self, summary: str, title: str, article_body: str
+    ) -> tuple[bool, str]:
+        """AIレビューがPASSでも機械ガードで最終確認する."""
+        text = (summary or "").strip()
+        if not text:
+            return False, "要約が空です"
+        if len(text.replace("\\n", "")) < 35:
+            return False, "要約が短すぎます（35文字未満）"
+        if len(text.replace("\\n", "")) > self.config.max_summary_chars:
+            return False, "要約が長すぎます"
+        if "\\n" in text:
+            return False, "改行が含まれています"
+        if has_taigen_dome(text):
+            return False, "体言止めが含まれています"
+        if has_unnatural_predicate(text):
+            return False, "不自然な述語が含まれています"
+        if has_vague_evaluation(text):
+            return False, "根拠のない評価が含まれています"
+        if missing_who_what(text):
+            return False, "WHO/WHATが不足しています"
+        terms = unexplained_terms(text)
+        if terms:
+            return False, "初見用語の説明がありません: " + "、".join(terms)
+        if has_role_without_name(text):
+            return False, "固有名詞のない役職表現があります"
+        if has_multiple_events(text):
+            return False, "独立した複数イベントが含まれています"
+        missing = missing_required_elements(
+            text, title, min_chars=35, max_lines=self.config.max_summary_lines
+        )
+        if missing:
+            return False, "必須要素が不足しています: " + "、".join(missing)
+        # 法人格表記の根拠確認
+        from src.ai_client import _CORPORATE_SUFFIX
+
+        if _CORPORATE_SUFFIX.search(text) and not _CORPORATE_SUFFIX.search(
+            f"{title}\\n{article_body}"
+        ):
+            return False, "根拠のない法人格表記があります"
+        return True, ""
+
     def process_one(self, article: Article) -> PipelineResult:
         """記事1件を処理する. 例外を外に出さず、必ずいずれかの状態で終了する."""
         key = article.article_key
@@ -349,19 +401,43 @@ class NewsPipeline:
                 )
 
             if review.status == "PASS":
-                article.summary = current_summary.summary
-                self.store.update(article)
-                self.store.set_status(
-                    key, APPROVED, review_status="PASS", message=review.reason
+                # AIレビューが甘くても通知品質を保つため、機械ガードを最終確認する。
+                mech_ok, mech_reason = self._mechanical_summary_ok(
+                    current_summary.summary, article.title, article.article_body
                 )
-                return PipelineResult(
-                    article_key=key,
-                    status=APPROVED,
-                    summary=current_summary.summary,
-                    review_status="PASS",
-                    reason=review.reason,
-                    review_attempts=review_attempts,
-                )
+                if not mech_ok:
+                    self.logger.warning(
+                        "レビューPASSだが機械ガード抵触: %s (%s)", key, mech_reason
+                    )
+                    review = ReviewResult(
+                        status="FAIL",
+                        issues=[mech_reason],
+                        unsupported_claims=[],
+                        missing_facts=[],
+                        corrections=[mech_reason],
+                        keyword_explanation_ok=False,
+                        unexplained_terms=[],
+                        concrete_basis_ok=False,
+                        four_w_one_h_ok=False,
+                        single_event_ok=False,
+                        missing_4w1h=[],
+                        reason=mech_reason,
+                        raw_text=review.raw_text,
+                    )
+                else:
+                    article.summary = current_summary.summary
+                    self.store.update(article)
+                    self.store.set_status(
+                        key, APPROVED, review_status="PASS", message=review.reason
+                    )
+                    return PipelineResult(
+                        article_key=key,
+                        status=APPROVED,
+                        summary=current_summary.summary,
+                        review_status="PASS",
+                        reason=review.reason,
+                        review_attempts=review_attempts,
+                    )
 
             if revisions >= self.config.max_revision_attempts:
                 message = f"レビュー不合格: {review.reason}"

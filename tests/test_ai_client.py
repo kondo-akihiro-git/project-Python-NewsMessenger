@@ -59,7 +59,7 @@ def test_extract_json_object_from_code_fence_and_prose() -> None:
 def test_validate_summary_payload_accepts_1_line_without_url() -> None:
     data = {
         "status": "OK",
-        "summary": "足立区の会社が攻撃を受け約5万件の情報が漏れ警察に相談しました。",
+        "summary": "足立区の会社が攻撃を受け約5万件の情報が漏れ警察に相談し被害を報告しました。",
         "key_facts": ["約5万件流出"],
         "reason": "システムの脆弱性を突かれた",
         "location": "東京都足立区",
@@ -91,7 +91,7 @@ def test_validate_summary_payload_rejects_taigen_dome() -> None:
         validate_summary_payload(
             {
                 **base,
-                "summary": "米マイクロソフトがコードレッドを宣言しました\n大規模障害で対応を見直し",
+                "summary": "米マイクロソフトがコードレッドを宣言しました\n大規模障害で対応を見直し対策",
             }
         )
 
@@ -313,7 +313,7 @@ def test_review_requires_keyword_explanation_field() -> None:
 
 _GOOD_SUMMARY_PAYLOAD = {
     "status": "OK",
-    "summary": "足立区の会社から情報約5万件が漏れ、警察に相談しました。",
+    "summary": "足立区の会社から情報約5万件が漏れ警察に相談し被害状況を報告しました。",
     "key_facts": ["約5万件流出"],
     "reason": "不正アクセス",
     "location": "東京都足立区",
@@ -556,7 +556,7 @@ def test_ensure_str_coerces_string_list() -> None:
     """AIが文字列ではなく文字列配列を返しても、連結して受け入れること。"""
     payload = {
         "status": "OK",
-        "summary": "会社が障害を宣言しました。",
+        "summary": "サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。",
         "key_facts": [],
         "reason": ["記事に明記なし"],
         "location": ["東京都", "新宿区"],
@@ -579,7 +579,7 @@ def test_length_failure_adds_shortening_instruction_on_retry() -> None:
         "numbers": [],
         "uncertainties": [],
     }
-    fixed = dict(base, summary="短くまとめました。")
+    fixed = dict(base, summary="サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。")
     payloads = [
         json.dumps(base, ensure_ascii=False),
         json.dumps(fixed, ensure_ascii=False),
@@ -602,7 +602,7 @@ def test_length_failure_adds_shortening_instruction_on_retry() -> None:
     assert "あ" * 60 in prompts[1]
     assert "上限以内に短くしてください" in prompts[1]
     assert "事実を削ってはいけません" in prompts[1]
-    assert result.summary == "短くまとめました。"
+    assert result.summary == "サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。"
 
 
 def test_over_limit_summary_is_compacted_only_with_safe_predicate() -> None:
@@ -745,7 +745,7 @@ def test_corporate_suffix_requires_article_basis() -> None:
     """法人格表記は本文・見出しに根拠がある場合だけ許可する。"""
     payload = {
         "status": "OK",
-        "summary": "株式会社サンプルが通信障害の原因究明を求めました。",
+        "summary": "株式会社サンプルが通信障害の原因究明と再発防止策を総務省に求めました。",
         "key_facts": [],
         "reason": "不明",
         "location": "不明",
@@ -786,7 +786,7 @@ def test_taigen_failure_adds_predicate_instruction_on_retry() -> None:
         "numbers": [],
         "uncertainties": [],
     }
-    fixed = dict(base, summary="会社が障害を発表しました。")
+    fixed = dict(base, summary="サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。")
     payloads = [json.dumps(base, ensure_ascii=False), json.dumps(fixed, ensure_ascii=False)]
     prompts: list[str] = []
 
@@ -803,7 +803,7 @@ def test_taigen_failure_adds_predicate_instruction_on_retry() -> None:
     assert "体言止め" in prompts[1]
     assert "会社が障害を発表し、対応を検討" in prompts[1]
     assert "述語（〜しました／〜します／〜です）で終えてください" in prompts[1]
-    assert result.summary == "会社が障害を発表しました。"
+    assert result.summary == "サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。"
 
 
 def test_external_ai_error_is_not_retried() -> None:
@@ -835,7 +835,7 @@ def test_compact_retry_template_is_used_with_previous_summary() -> None:
         "numbers": [],
         "uncertainties": [],
     }
-    fixed = dict(base, summary="短くまとめました。")
+    fixed = dict(base, summary="サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。")
     payloads = [json.dumps(base, ensure_ascii=False), json.dumps(fixed, ensure_ascii=False)]
     prompts: list[str] = []
 
@@ -852,7 +852,7 @@ def test_compact_retry_template_is_used_with_previous_summary() -> None:
     assert len(prompts) == 2
     assert prompts[1] == f"短縮: {long_summary} / 60文字 / 55文字以内"
     assert "base prompt" not in prompts[1]
-    assert result.summary == "短くまとめました。"
+    assert result.summary == "サンプル会社が新サービスを発表し個人情報保護のため警察に相談しました。"
 
 
 def test_quality_failure_uses_compact_retry_template() -> None:
