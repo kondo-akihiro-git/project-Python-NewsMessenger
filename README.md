@@ -7,7 +7,7 @@ Yahoo!ニュースおよびITmedia NEWSなどのRSSフィードから新着ニ�
 ## 現在の開発状況
 
 - **完了**: Phase 1〜8（すべて実装・検証済み）
-- **テスト**: `pytest -q tests/` → **102件PASS**
+- **テスト**: `pytest -q tests/` → **109件PASS**
 - **実統合検証**: 実RSS 108件取得 → 実記事1件をレビュー承認 → 実Telegram送信成功（オンデバイスAI版でも再確認済み）
 - **launchd**: インストール・有効化済み（5分間隔、GUIユーザセッション）
 - **通知形式**: **要約文章のみ**を送信します。ユーザー指示により「元記事を読む」などのリンク文言・URL・`text_link` entity は一切付けません。
@@ -18,6 +18,7 @@ Yahoo!ニュースおよびITmedia NEWSなどのRSSフィードから新着ニ�
 - **機械ガード**: 55文字以内・2行以内に加え、最低35文字・見出しの固有語2つ以上（主体と出来事名の手掛かり）・4W1H最低限・根拠なき評価の検出を必須とする。満たさない要約はレビューへ進まず再生成する。レビューも `concrete_basis_ok` / `four_w_one_h_ok` / `single_event_ok` が false なら PASS を FAIL へ上書きして修正ループへ戻す。
 - **再試行方針**: 品質基準に抵触した場合は、要約→レビュー→修正を基準を満たすまで繰り返す（安全上限は `max_summary_attempts` / `max_revision_attempts`）。AIの利用制限・タイムアウト・本文不足などの外部障害のみ即フェイルクローズとし、有料APIへフォールバックしない。
 - **Git**: 公開リポジトリ `project-Python-NewsMessenger` で管理。
+- **ユーザー質問・回答・認識の履歴と現状要約**: [docs/USER_QA.md](docs/USER_QA.md)（どのAIエージェントからもまず読むこと）
 - 詳細は [PROGRESS.md](PROGRESS.md)、設計書原本は [docs/MASTER_DESIGN.md](docs/MASTER_DESIGN.md)、判断履歴は [docs/DECISIONS.md](docs/DECISIONS.md)、別Macでの再開手順は [docs/SETUP_ANY_PC.md](docs/SETUP_ANY_PC.md) を参照してください。
 
 ## 開発・実行コマンド

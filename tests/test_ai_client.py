@@ -621,6 +621,141 @@ def test_over_limit_summary_is_compacted_only_with_safe_predicate() -> None:
     assert result.summary.endswith("発生した。")
 
 
+def test_about_phrase_is_compacted_without_changing_facts() -> None:
+    """「〜について議論」→「〜を議論」で57文字を自然な54文字へ収める。"""
+    summary = (
+        "藤井総務相は、飲食店のメニューにAIで生成した画像を使用した場合、"
+        "景品表示法違反ではないかについて議論しています。"
+    )
+    assert len(summary) == 57
+    payload = {
+        "status": "OK",
+        "summary": summary,
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(payload, max_chars=55)
+    assert result.summary.endswith("違反ではないかを議論しています。")
+    assert len(result.summary) == 54
+
+
+def test_overlong_supplement_line_is_dropped_when_first_line_is_valid() -> None:
+    """超過時に別記事由来の補足行を落とし、主要ニュース1行だけを残す。"""
+    first_line = (
+        "飲食店が生成AIで生成した画像を使用した場合、景品表示法違反になるか検討しています。"
+    )
+    payload = {
+        "status": "OK",
+        "summary": first_line + "\n藤井総務相が原因究明を求めました。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(
+        payload,
+        title="飲食店の“AI商品画像”は景品表示法違反にならないの？　弁護士の見解(ITmedia NEWS)",
+        article_body="飲食店のメニューに生成AIで作った画像を使うことについて弁護士の見解を紹介します。",
+    )
+    assert result.summary == first_line
+    assert len(result.summary) <= 55
+
+
+def test_overlong_sentence_without_newline_is_dropped() -> None:
+    """AIが改行せず「。」だけで繋いだ補足文も2行目として扱う。"""
+    first_line = (
+        "飲食店が生成AIで生成した画像を使用した場合、景品表示法違反となる可能性があります。"
+    )
+    payload = {
+        "status": "OK",
+        "summary": first_line + "生成AIを利用した画像は、商品の撮影や画像制作にかかる手間を減らす。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(
+        payload,
+        title="飲食店の“AI商品画像”は景品表示法違反にならないの？　弁護士の見解(ITmedia NEWS)",
+    )
+    assert result.summary == first_line
+
+
+def test_cause_phrase_is_compacted_to_fit_one_character_over() -> None:
+    """56文字の1行要約を「により」→「で」で55文字以内に収める。"""
+    summary = "文部科学省は11月25日に不正アクセスにより最大16万3953件の情報が外部に漏えいした可能性があると発表した。"
+    assert len(summary) == 56
+    payload = {
+        "status": "OK",
+        "summary": summary,
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(
+        payload,
+        title="文部科学省の入札システムに不正アクセス　最大16万件漏えいか",
+    )
+    assert "不正アクセスで" in result.summary
+    assert len(result.summary) <= 55
+
+
+def test_supplement_line_dropped_even_if_second_title_keyword_is_only_there() -> None:
+    """補足行にしか無い見出し語があっても1行目が健全なら補足を落とせる。"""
+    first_line = "米Xは11月25日に13～17歳のユーザー向けにペアレンタルコントロール機能を提供した。"
+    payload = {
+        "status": "OK",
+        "summary": first_line + "\n保護者は利用時間やコンテンツを管理できます。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    result = validate_summary_payload(
+        payload,
+        title="X、「ペアレンタルコントロール」を導入　メッセージ内容は見られず(ITmedia NEWS)",
+    )
+    assert result.summary == first_line
+
+
+def test_prompts_do_not_embed_past_article_examples() -> None:
+    """過去記事の実名例がプロンプトへ戻ると別記事へコピーされるため禁止する。"""
+    prompt_dir = Path(__file__).resolve().parents[1] / "config" / "prompts"
+    contamination = ("藤井総務相", "NTTドコモ", "OpenAI", "dots", "KDDI", "5G SA")
+    for path in sorted(prompt_dir.glob("*.txt")):
+        text = path.read_text(encoding="utf-8")
+        for token in contamination:
+            assert token not in text, f"{path.name} に過去記事の例 {token} があります"
+        assert "例文のコピー禁止" in text
+
+
+def test_corporate_suffix_requires_article_basis() -> None:
+    """法人格表記は本文・見出しに根拠がある場合だけ許可する。"""
+    payload = {
+        "status": "OK",
+        "summary": "株式会社サンプルが通信障害の原因究明を求めました。",
+        "key_facts": [],
+        "reason": "不明",
+        "location": "不明",
+        "numbers": [],
+        "uncertainties": [],
+    }
+    with pytest.raises(SummaryQualityError, match="法人格"):
+        validate_summary_payload(payload)
+    result = validate_summary_payload(
+        payload, article_body="株式会社サンプルは11月27日に発表しました。"
+    )
+    assert "株式会社サンプル" in result.summary
+
+
 def test_unnatural_predicate_is_rejected_without_title() -> None:
     """見出しが渡されなくても不自然な述語は品質不合格とする。"""
     payload = {

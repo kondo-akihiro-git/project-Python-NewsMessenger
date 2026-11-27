@@ -26,7 +26,7 @@ Antigravity と OpenCode のどちらで開発を継続する場合でも、以�
 
 ## 3. 作業再開手順（OpenCode / 次回セッション向け）
 1. `README.md`, `DESIGN.md`, `AGENTS.md`, `CHANGELOG.md`, `PROGRESS.md` を読む。
-2. `docs/MASTER_DESIGN.md`（ユーザー提供の設計書原本）と `docs/DECISIONS.md`（判断履歴）、`docs/SETUP_ANY_PC.md`（別Macでの再開手順）を読む。
+2. **`docs/USER_QA.md`（ユーザー質問・回答・認識の履歴と現状要約）を必ず読む。** 次に `docs/MASTER_DESIGN.md`（設計書原本）、`docs/DECISIONS.md`（判断履歴）、`docs/SETUP_ANY_PC.md`（別Macでの再開手順）を読む。
 3. 実際のファイル構成・コード・テスト結果を確認し、ドキュメントと齟齬がないか照合する。
 4. 未完了の Phase から再開し、完了ごとに上記ドキュメントと `PROGRESS.md` を更新する。
 5. 完了していない機能を「実装済み」と報告しない。

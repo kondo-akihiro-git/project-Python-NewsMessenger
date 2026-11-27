@@ -200,6 +200,7 @@ class NewsPipeline:
                 max_chars=self.config.max_summary_chars,
                 retry_template=retry_template,
                 title=article.title,
+                article_body=article.article_body,
             )
         except SummaryQualityError as exc:
             # 再生成を尽くしても基準を満たせない場合のみフェイルクローズ。
@@ -293,6 +294,7 @@ class NewsPipeline:
                 max_lines=self.config.max_summary_lines,
                 max_chars=self.config.max_summary_chars,
                 title=article.title,
+                article_body=article.article_body,
                 retry_template=retry_template,
             )
         except SummaryQualityError as exc:

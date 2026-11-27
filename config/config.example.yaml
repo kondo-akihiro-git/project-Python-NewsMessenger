@@ -22,6 +22,13 @@ feeds:
   - name: "ITmedia NEWS"
     url: "https://rss.itmedia.co.jp/rss/2.0/news_bursts.xml"
     enabled: true
+  # 追加候補（2026-11-27 実確認）: 公式RSSが当日更新されており、本文抽出も汎用 selector で可能なIT系媒体。
+  - name: "GIGAZINE"
+    url: "https://gigazine.net/news/rss_2.0/"
+    enabled: true
+  - name: "PC Watch"
+    url: "https://pc.watch.impress.co.jp/data/rss/1.0/pcw/feed.rdf"
+    enabled: true
 
 content:
   min_chars_guideline: 400     # 本文文字数の目安（短い記事はレビュー判定併用）

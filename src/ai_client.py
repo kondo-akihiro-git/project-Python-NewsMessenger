@@ -350,32 +350,47 @@ def _ensure_str(data, key):
     return val.strip()
 
 
-# 安全に常体化できる述語だけを対象にする。
+# 意味を変えずに短くできる表現だけを対象にする。
 # 「ました」→「した」は「発生しした」「求めした」のような不自然な述語を生むため禁止。
-_SAFE_COMPACTION = re.compile(r"(?<![とを])しました")
+_SAFE_COMPACTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?<![とを])しました"), "した"),
+    (re.compile(r"について(?=(?:議論|発表|説明|言及|報告))"), "を"),
+    (re.compile(r"に対して"), "に"),
+    # 「不正アクセスにより漏えい」→「不正アクセスで漏えい」のように、
+    # 手段・原因を保ったまま「で」へ短くする。
+    (re.compile(r"により"), "で"),
+)
+_CORPORATE_SUFFIX = re.compile(r"株式会社|\(株\)|（株）")
 
 
 def _compact_overlong_summary(text: str, max_chars: int) -> str:
-    """1〜3文字の超過だけを、自然な述語の言い換えで収める Safety net。
+    """1〜数文字の超過だけを、意味を変えない言い換えで収める Safety net。
 
-    「発生しました」→「発生した」のように、サ変動詞の「しました」を「した」へ
-    置き換える場合だけ短縮する。新しい事実は追加せず、置換後も全品質ガードで
-    再検証する。安全な置換が無い場合はそのまま返し、再生成側で解消する。
+    「発生しました」→「発生した」「〜について議論」→「〜を議論」のように、
+    事実・助詞・述語を保ったまま短くなる定型表現だけを置き換える。
+    新しい事実は追加せず、置換後も全品質ガードで再検証する。
+    安全な置換が無い場合はそのまま返し、再生成側で解消する。
     """
     current = text
-    for _ in range(3):
+    for _ in range(6):
         if len(current.replace("\n", "")) <= max_chars:
             return current
-        matches = list(_SAFE_COMPACTION.finditer(current))
-        if not matches:
+        changed = False
+        for pattern, replacement in _SAFE_COMPACTIONS:
+            matches = list(pattern.finditer(current))
+            if not matches:
+                continue
+            match = matches[-1]
+            current = current[: match.start()] + replacement + current[match.end() :]
+            changed = True
             break
-        match = matches[-1]
-        current = current[: match.start()] + "した" + current[match.end() :]
+        if not changed:
+            break
     return current
 
 
 def validate_summary_payload(
-    data, *, max_lines=2, max_chars=55, raw_text="", title=""
+    data, *, max_lines=2, max_chars=55, raw_text="", title="", article_body=""
 ):
     """要約AIのJSON出力を検査して SummaryResult を返す.
 
@@ -402,7 +417,10 @@ def validate_summary_payload(
             raise SummaryQualityError("要約本文に不要な前置きラベルが含まれています。")
         if "{" in summary or "}" in summary or "```" in summary:
             raise SummaryQualityError("要約本文にJSONやコード記法が含まれています。")
-        lines = [line.strip() for line in summary.splitlines() if line.strip()]
+        # オンデバイスAIは改行せず「。」で2文目を繋いでくることがある。
+        # 文境界を行境界として扱い、超過時に補足行を落とせるようにする。
+        sentence_lines = re.sub(r"([。！？])", r"\1\n", summary)
+        lines = [line.strip() for line in sentence_lines.splitlines() if line.strip()]
         if not lines:
             raise InvalidAIResponseError("要約本文に有効な行がありません。")
         if len(lines) > max_lines:
@@ -411,6 +429,36 @@ def validate_summary_payload(
             )
         normalized_summary = _compact_overlong_summary("\n".join(lines), max_chars)
         char_count = len(normalized_summary.replace("\n", ""))
+        # 55文字超過の大半は、主要ニュース（1行目）に重複・別記事由来の
+        # 補足行が付いたことが原因。1行目だけで全ガードを満たせるなら補足行を落とす。
+        # 補足行の削除は「2行目は補足のみ」というルールに沿い、6要素はAIレビューで確認する。
+        supplement_dropped = False
+        if char_count > max_chars and len(lines) >= 2:
+            first_line = lines[0].strip()
+            first_ok = (
+                35 <= len(first_line) <= max_chars
+                and not has_taigen_dome(first_line)
+                and not has_unnatural_predicate(first_line)
+                and not has_vague_evaluation(first_line)
+                and not missing_who_what(first_line)
+                and not unexplained_terms(first_line)
+                and not has_role_without_name(first_line)
+                and not has_multiple_events(first_line)
+                # 見出し固有語2つは要約全体の健全性チェック。補足行を落とす際は
+                # 2行目にしか無い固有語（例: 「メッセージ内容」）があるため例外にし、
+                # 主体・出来事名の最終判定はAIレビューへ委ねる。
+                and not [
+                    item
+                    for item in missing_required_elements(
+                        first_line, title, min_chars=35, max_lines=2
+                    )
+                    if item != "主体・出来事名"
+                ]
+            )
+            if first_ok:
+                normalized_summary = first_line
+                char_count = len(first_line)
+                supplement_dropped = True
         if char_count > max_chars:
             raise SummaryQualityError(
                 f"要約が上限文字数 ({max_chars}文字) を超えています ({char_count}文字): "
@@ -424,6 +472,12 @@ def validate_summary_payload(
         if has_unnatural_predicate(normalized_summary):
             raise SummaryQualityError(
                 "要約に不自然な述語が含まれています: " f"{normalized_summary!r}"
+            )
+        if _CORPORATE_SUFFIX.search(normalized_summary) and not _CORPORATE_SUFFIX.search(
+            f"{title}\n{article_body}"
+        ):
+            raise SummaryQualityError(
+                "要約に記事本文・見出しにない法人格表記（株式会社／(株)）があります。"
             )
         if has_vague_evaluation(normalized_summary):
             raise SummaryQualityError(
@@ -454,6 +508,10 @@ def validate_summary_payload(
             missing = missing_required_elements(
                 normalized_summary, title, min_chars=35, max_lines=max_lines
             )
+            if supplement_dropped:
+                # 削除した補足行にしか無い見出し語は要求しない。AIレビューが
+                # 主体・出来事名の充足を最終判断する。
+                missing = tuple(item for item in missing if item != "主体・出来事名")
             if missing:
                 raise SummaryQualityError(
                     "要約に必須要素が不足しています: " + "、".join(missing)
@@ -954,6 +1012,7 @@ class ShortcutAIClient:
         max_chars: int = 55,
         retry_template: Optional[str] = None,
         title: str = "",
+        article_body: str = "",
     ) -> SummaryResult:
         """News_Summarize ショートカットを実行して要約結果を返す."""
         return self._run_with_json_validation(
@@ -965,6 +1024,7 @@ class ShortcutAIClient:
                 max_chars=max_chars,
                 raw_text=raw,
                 title=title,
+                article_body=article_body,
             ),
             max_chars=max_chars,
             retry_template=retry_template,
@@ -985,6 +1045,7 @@ class ShortcutAIClient:
         max_lines: int = 2,
         max_chars: int = 55,
         title: str = "",
+        article_body: str = "",
         retry_template: Optional[str] = None,
     ) -> SummaryResult:
         """修正プロンプトを要約ショートカットへ渡し、修正済み要約を返す.
@@ -1001,6 +1062,7 @@ class ShortcutAIClient:
                 max_chars=max_chars,
                 raw_text=raw,
                 title=title,
+                article_body=article_body,
             ),
             max_chars=max_chars,
             retry_template=retry_template,
