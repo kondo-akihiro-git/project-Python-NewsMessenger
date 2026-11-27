@@ -26,11 +26,14 @@ feeds:
   - name: "GIGAZINE"
     url: "https://gigazine.net/news/rss_2.0/"
     enabled: true
-  - name: "INTERNET Watch"
-    url: "https://internet.watch.impress.co.jp/data/rss/1.0/iw/feed.rdf"
-    enabled: true
   - name: "ASCII.jp"
     url: "https://ascii.jp/rss.xml"
+    enabled: true
+  - name: "朝日新聞"
+    url: "https://www.asahi.com/rss/asahi/newsheadlines.rdf"
+    enabled: true
+  - name: "毎日新聞"
+    url: "https://mainichi.jp/rss/etc/mainichi-flash.rss"
     enabled: true
   - name: "時事ドットコム"
     url: "https://www.jiji.com/rss/ranking.rdf"
